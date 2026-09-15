@@ -90,9 +90,9 @@ class LegacyReadApiLoadTest {
     private static Map<String, Map<String, Integer>> responseEntities(String body) throws IOException {
         var entities = new LinkedHashMap<String, Map<String, Integer>>();
         try (var parser = JSON_FACTORY.createParser(body)) {
-            assertThat(parser.nextToken()).isEqualTo(JsonToken.START_ARRAY);
+            require(parser.nextToken() == JsonToken.START_ARRAY, "Response must start with a JSON array");
             while (parser.nextToken() != JsonToken.END_ARRAY) {
-                assertThat(parser.currentToken()).isEqualTo(JsonToken.START_OBJECT);
+                require(parser.currentToken() == JsonToken.START_OBJECT, "Each response entry must be a JSON object");
                 var keyValue = "";
                 Map<String, Integer> features = Map.of();
                 while (parser.nextToken() != JsonToken.END_OBJECT) {
@@ -112,12 +112,18 @@ class LegacyReadApiLoadTest {
 
     private static Map<String, Integer> readFeatures(com.fasterxml.jackson.core.JsonParser parser) throws IOException {
         var features = new LinkedHashMap<String, Integer>();
-        assertThat(parser.currentToken()).isEqualTo(JsonToken.START_OBJECT);
+        require(parser.currentToken() == JsonToken.START_OBJECT, "'features' must be a JSON object");
         while (parser.nextToken() != JsonToken.END_OBJECT) {
             var featureName = parser.currentName();
             parser.nextToken();
             features.put(featureName, parser.getIntValue());
         }
         return features;
+    }
+
+    private static void require(boolean condition, String message) {
+        if (!condition) {
+            throw new IOException(message);
+        }
     }
 }
