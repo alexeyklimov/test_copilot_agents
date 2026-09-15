@@ -10,6 +10,7 @@ public final class LegacyReadService {
     private final TenantAccessController accessController;
     private final CassandraSliceReadPipe sliceReadPipe;
 
+    /** Создает сервис чтения со всеми зависимостями. */
     public LegacyReadService(
             RootAllocator allocator,
             LegacyJsonArrowCodec codec,
@@ -22,6 +23,7 @@ public final class LegacyReadService {
         this.sliceReadPipe = sliceReadPipe;
     }
 
+    /** Готовит авторизованный запрос к чтению. */
     public PreparedRead prepare(String tenantId, InputStream inputStream) throws Exception {
         var request = codec.parse(inputStream, allocator);
         try {
@@ -35,10 +37,12 @@ public final class LegacyReadService {
     public final class PreparedRead implements AutoCloseable {
         private final ArrowMessages.ArrowTenantRequest request;
 
+        /** Сохраняет подготовленный и проверенный запрос. */
         private PreparedRead(ArrowMessages.ArrowTenantRequest request) {
             this.request = request;
         }
 
+        /** Выполняет чтение и пишет ответ в поток. */
         public void stream(java.io.OutputStream outputStream) throws Exception {
             try (var writer = codec.newResponseWriter(outputStream)) {
                 for (var sliceRequest : request.sliceRequests()) {
@@ -50,6 +54,7 @@ public final class LegacyReadService {
             }
         }
 
+        /** Освобождает ресурсы подготовленного чтения. */
         @Override
         public void close() {
             request.close();

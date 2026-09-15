@@ -14,15 +14,18 @@ public final class CassandraSliceReadPipe {
     private final CqlSession session;
     private final int batchSize;
 
+    /** Создает пайп чтения с размером батча по умолчанию. */
     public CassandraSliceReadPipe(CqlSession session) {
         this(session, 512);
     }
 
+    /** Инициализирует пайп чтения с размером батча. */
     public CassandraSliceReadPipe(CqlSession session, int batchSize) {
         this.session = session;
         this.batchSize = batchSize;
     }
 
+    /** Читает срезы из Cassandra и отдает их батчами. */
     public void stream(SliceReadRequest request, BufferAllocator allocator, ResultBatchConsumer consumer) throws Exception {
         if (request.featureIds().length == 0) {
             return;
@@ -49,6 +52,7 @@ public final class CassandraSliceReadPipe {
         }
     }
 
+    /** Собирает CQL-запрос для сущности и набора фичей. */
     private static String queryFor(SliceReadRequest request, byte[] entity) {
         var features = Arrays.stream(request.featureIds())
                 .mapToObj(String::valueOf)
@@ -59,6 +63,7 @@ public final class CassandraSliceReadPipe {
                 + " AND feature_id IN (" + features + ")";
     }
 
+    /** Преобразует байты в CQL-литерал blob. */
     private static String blobLiteral(byte[] bytes) {
         var builder = new StringBuilder("0x");
         for (byte value : bytes) {
@@ -68,6 +73,7 @@ public final class CassandraSliceReadPipe {
         return builder.toString();
     }
 
+    /** Копирует оставшиеся байты из буфера. */
     private static byte[] remainingBytes(ByteBuffer buffer) {
         var copy = buffer.duplicate();
         var bytes = new byte[copy.remaining()];

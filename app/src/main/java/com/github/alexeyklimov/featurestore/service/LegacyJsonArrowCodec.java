@@ -29,10 +29,12 @@ public final class LegacyJsonArrowCodec {
     private final JsonFactory jsonFactory = new JsonFactory();
     private final FeatureCatalog catalog;
 
+    /** Создает кодек для заданного каталога фичей. */
     public LegacyJsonArrowCodec(FeatureCatalog catalog) {
         this.catalog = catalog;
     }
 
+    /** Разбирает legacy JSON в Arrow-запрос арендатора. */
     public ArrowTenantRequest parse(InputStream inputStream, BufferAllocator parentAllocator) throws IOException {
         var requestAllocator = parentAllocator.newChildAllocator("tenant-request", 0, Long.MAX_VALUE);
         var builders = new LinkedHashMap<FeatureCatalog.KeyType, RequestTableBuilder>();
@@ -115,16 +117,19 @@ public final class LegacyJsonArrowCodec {
         return new ArrowTenantRequest(requestAllocator, requests, keyCount, keyCount * requestedFeatures.size(), totalBytes);
     }
 
+    /** Создает writer для JSON-ответа из Arrow-потока. */
     public JsonArrowResponseWriter newResponseWriter(OutputStream outputStream) throws IOException {
         return new JsonArrowResponseWriter(jsonFactory.createGenerator(outputStream));
     }
 
+    /** Проверяет условие и выбрасывает ошибку запроса. */
     private static void require(boolean condition, String message) {
         if (!condition) {
             throw new ReadRequestException(400, message);
         }
     }
 
+    /** Закрывает все промежуточные билдеры запроса. */
     private static void closeAll(Iterable<RequestTableBuilder> builders) {
         for (var builder : builders) {
             builder.close();
@@ -139,12 +144,14 @@ public final class LegacyJsonArrowCodec {
         private Map<String, Object> currentFeatures;
         private boolean started;
 
+        /** Инициализирует writer и открывает JSON-массив. */
         JsonArrowResponseWriter(JsonGenerator generator) throws IOException {
             this.generator = generator;
             generator.writeStartArray();
             started = true;
         }
 
+        /** Принимает Arrow-батч и накапливает JSON-ответ. */
         public void consume(SliceReadRequest request, VectorSchemaRoot batch) throws IOException {
             var ordinals = (org.apache.arrow.vector.BigIntVector) batch.getVector("request_ordinal");
             var entities = (VarBinaryVector) batch.getVector("entity");
@@ -165,6 +172,7 @@ public final class LegacyJsonArrowCodec {
             }
         }
 
+        /** Декодирует бинарное значение фичи. */
         private Object decode(FeatureCatalog.ValueEncoding valueEncoding, byte[] bytes) {
             return switch (valueEncoding) {
                 case INT32 -> ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getInt();
@@ -172,6 +180,7 @@ public final class LegacyJsonArrowCodec {
             };
         }
 
+        /** Сбрасывает накопленный объект в JSON-поток. */
         private void flushCurrent() throws IOException {
             if (currentFeatures == null || currentFeatures.isEmpty()) {
                 return;
@@ -194,6 +203,7 @@ public final class LegacyJsonArrowCodec {
             generator.flush();
         }
 
+        /** Завершает JSON-массив и закрывает writer. */
         @Override
         public void close() throws IOException {
             if (!started) {

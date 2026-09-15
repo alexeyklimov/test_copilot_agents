@@ -12,6 +12,7 @@ public final class FeatureCatalog {
     private final Map<String, FeatureDefinition> featuresByName;
     private final Map<String, TenantPolicy> tenantPolicies;
 
+    /** Создает каталог ключей, фичей и политик. */
     public FeatureCatalog(List<KeyType> keyTypes, List<TenantPolicy> tenantPolicies) {
         this.keyTypesByName = new LinkedHashMap<>();
         this.featuresByName = new LinkedHashMap<>();
@@ -27,18 +28,22 @@ public final class FeatureCatalog {
         }
     }
 
+    /** Ищет тип ключа по имени. */
     public Optional<KeyType> findKeyType(String name) {
         return Optional.ofNullable(keyTypesByName.get(name));
     }
 
+    /** Ищет описание фичи по имени. */
     public Optional<FeatureDefinition> findFeature(String name) {
         return Optional.ofNullable(featuresByName.get(name));
     }
 
+    /** Ищет политику доступа арендатора. */
     public Optional<TenantPolicy> findTenantPolicy(String tenantId) {
         return Optional.ofNullable(tenantPolicies.get(tenantId));
     }
 
+    /** Возвращает все доступные типы ключей. */
     public Collection<KeyType> keyTypes() {
         return keyTypesByName.values();
     }
@@ -50,6 +55,7 @@ public final class FeatureCatalog {
             Map<String, FeatureDefinition> featuresByName,
             Map<Integer, FeatureDefinition> featuresById
     ) {
+        /** Создает тип ключа и индексы фичей. */
         public static KeyType of(String name, int keyId, String slice, FeatureDefinition... features) {
             var byName = new LinkedHashMap<String, FeatureDefinition>();
             var byId = new LinkedHashMap<Integer, FeatureDefinition>();
@@ -60,6 +66,7 @@ public final class FeatureCatalog {
             return new KeyType(name, keyId, slice, Map.copyOf(byName), Map.copyOf(byId));
         }
 
+        /** Возвращает фичу по числовому идентификатору. */
         public FeatureDefinition featureById(int featureId) {
             return featuresById.get(featureId);
         }

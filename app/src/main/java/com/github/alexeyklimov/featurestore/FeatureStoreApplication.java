@@ -13,9 +13,11 @@ import java.io.IOException;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class FeatureStoreApplication {
+    /** Скрывает создание экземпляра приложения. */
     private FeatureStoreApplication() {
     }
 
+    /** Запускает приложение и HTTP-сервер. */
     public static void main(String[] args) throws Exception {
         var httpPort = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
         try (var allocator = new RootAllocator();
@@ -26,6 +28,7 @@ public final class FeatureStoreApplication {
         }
     }
 
+    /** Собирает зависимости и создает HTTP-сервер. */
     public static FeatureStoreHttpServer createServer(
             int httpPort,
             RootAllocator allocator,
@@ -39,6 +42,7 @@ public final class FeatureStoreApplication {
         return FeatureStoreHttpServer.start(httpPort, readService);
     }
 
+    /** Создает Cassandra-сессию из переменных окружения. */
     private static CqlSession createSession() {
         return CqlSessionFactory.create(
                 System.getenv().getOrDefault("CASSANDRA_HOST", "127.0.0.1"),
