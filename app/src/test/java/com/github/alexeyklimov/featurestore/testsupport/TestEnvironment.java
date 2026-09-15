@@ -166,10 +166,16 @@ public final class TestEnvironment implements AutoCloseable {
     }
 
     private static com.datastax.oss.simulacron.server.StubStore fallbackStubStore(BoundNode node) {
-        if (node.getDataCenter() instanceof BoundDataCenter dataCenter) {
-            return dataCenter.getStubStore();
+        var dataCenter = node.getDataCenter();
+        if (dataCenter instanceof BoundDataCenter boundDataCenter) {
+            return boundDataCenter.getStubStore();
         }
-        throw new IllegalStateException("Expected Simulacron server node to use BoundDataCenter, got " + node.getDataCenter().getClass().getName());
+        if (dataCenter == null) {
+            throw new IllegalStateException("Expected Simulacron server node to have a datacenter");
+        }
+        else {
+            throw new IllegalStateException("Expected Simulacron server node to use BoundDataCenter, got " + dataCenter.getClass().getName());
+        }
     }
 
     private static final class PseudoRandomQueryPrime extends StubMapping {

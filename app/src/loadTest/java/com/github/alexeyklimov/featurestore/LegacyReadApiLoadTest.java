@@ -80,11 +80,12 @@ class LegacyReadApiLoadTest {
         try (var parser = JSON_FACTORY.createParser(body)) {
             assertThat(parser.nextToken()).isEqualTo(JsonToken.START_ARRAY);
             while (parser.nextToken() != JsonToken.END_ARRAY) {
+                assertThat(parser.currentToken()).isEqualTo(JsonToken.START_OBJECT);
                 var keyValue = "";
                 Map<String, Integer> features = Map.of();
                 while (parser.nextToken() != JsonToken.END_OBJECT) {
                     var fieldName = parser.currentName();
-                    var token = parser.nextToken();
+                    parser.nextToken();
                     switch (fieldName) {
                         case "key_value" -> keyValue = parser.getValueAsString();
                         case "features" -> features = readFeatures(parser);
