@@ -31,7 +31,7 @@ The PoC is built as a narrow read pipeline that translates legacy JSON requests 
    - known tenant validation
    - allowed key types per tenant
    - request quotas for keys, feature references, and Arrow payload size
-6. `CassandraSliceReadPipe` performs per-entity slice reads in Cassandra and emits Arrow result batches.
+6. `CassandraSliceReadPipe` performs per-entity slice reads in Cassandra, currently builds literal CQL for each entity, and emits Arrow result batches.
 
 ### Data model
 
