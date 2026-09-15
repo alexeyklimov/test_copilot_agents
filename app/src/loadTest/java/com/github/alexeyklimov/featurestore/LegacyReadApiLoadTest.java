@@ -34,9 +34,10 @@ class LegacyReadApiLoadTest {
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertThat(countOccurrences(response.body(), "\"key\":\"user_id\"")).isEqualTo(100);
                 assertThat(countOccurrences(response.body(), "\"feature600\":")).isEqualTo(100);
-                var user1 = entityFeatures(response.body(), "user-1");
-                var user42 = entityFeatures(response.body(), "user-42");
-                var user100 = entityFeatures(response.body(), "user-100");
+                var entities = responseEntities(response.body());
+                var user1 = entities.get("user-1");
+                var user42 = entities.get("user-42");
+                var user100 = entities.get("user-100");
                 assertThat(user1).containsEntry("feature1", TestEnvironment.pseudoRandomValue("user-1", 1001));
                 assertThat(user1).containsEntry("feature600", TestEnvironment.pseudoRandomValue("user-1", 1600));
                 assertThat(user42).containsEntry("feature321", TestEnvironment.pseudoRandomValue("user-42", 1321));
@@ -74,7 +75,8 @@ class LegacyReadApiLoadTest {
         return count;
     }
 
-    private static Map<String, Integer> entityFeatures(String body, String entity) throws IOException {
+    private static Map<String, Map<String, Integer>> responseEntities(String body) throws IOException {
+        var entities = new LinkedHashMap<String, Map<String, Integer>>();
         try (var parser = JSON_FACTORY.createParser(body)) {
             assertThat(parser.nextToken()).isEqualTo(JsonToken.START_ARRAY);
             while (parser.nextToken() != JsonToken.END_ARRAY) {
@@ -89,12 +91,10 @@ class LegacyReadApiLoadTest {
                         default -> parser.skipChildren();
                     }
                 }
-                if (entity.equals(keyValue)) {
-                    return features;
-                }
+                entities.put(keyValue, features);
             }
         }
-        throw new IllegalArgumentException("Entity not found in response: " + entity);
+        return entities;
     }
 
     private static Map<String, Integer> readFeatures(com.fasterxml.jackson.core.JsonParser parser) throws IOException {

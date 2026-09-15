@@ -32,8 +32,8 @@ import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
     private static final Pattern READ_QUERY_PATTERN = Pattern.compile(
-            "^SELECT feature_id, value FROM (?:.+?) WHERE key_id = \\d+ AND entity = 0x[0-9a-f]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
-    private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-f]+)");
+            "^SELECT feature_id, value FROM (?:.+?) WHERE key_id = \\d+ AND entity = 0x[0-9a-fA-F]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
+    private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-fA-F]+)");
     private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
 
     private final Server simulacron;
