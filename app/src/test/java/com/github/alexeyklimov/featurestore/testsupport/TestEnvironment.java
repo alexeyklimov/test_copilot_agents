@@ -1,6 +1,8 @@
 package com.github.alexeyklimov.featurestore.testsupport;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
+import com.datastax.oss.driver.api.querybuilder.term.Term;
 import com.datastax.oss.simulacron.common.cluster.NodeSpec;
 import com.datastax.oss.simulacron.common.result.SuccessResult;
 import com.datastax.oss.simulacron.common.stubbing.Prime;
@@ -117,17 +119,16 @@ public final class TestEnvironment implements AutoCloseable {
     }
 
     public static String readQuery(String slice, int keyId, String entity, int... featureIds) {
-        var features = new StringBuilder();
-        for (int index = 0; index < featureIds.length; index++) {
-            if (index > 0) {
-                features.append(", ");
-            }
-            features.append(featureIds[index]);
-        }
-        return "SELECT feature_id, value FROM " + slice
-                + " WHERE key_id = " + keyId
-                + " AND entity = " + blobLiteral(entity.getBytes(StandardCharsets.UTF_8))
-                + " AND feature_id IN (" + features + ")";
+        Term[] features = java.util.Arrays.stream(featureIds)
+                .mapToObj(QueryBuilder::literal)
+                .toArray(Term[]::new);
+        return QueryBuilder.selectFrom(slice)
+                .columns("feature_id", "value")
+                .whereColumn("key_id").isEqualTo(QueryBuilder.literal(keyId))
+                .whereColumn("entity").isEqualTo(QueryBuilder.literal(ByteBuffer.wrap(entity.getBytes(StandardCharsets.UTF_8))))
+                .whereColumn("feature_id").in(features)
+                .build()
+                .getQuery();
     }
 
     public static byte[] intBytes(int value) {
