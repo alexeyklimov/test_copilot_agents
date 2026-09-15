@@ -8,7 +8,7 @@ repositories {
 
 val arrowVersion = "19.0.0"
 val cassandraDriverVersion = "4.19.3"
-val jacksonVersion = "2.20.0"
+val jacksonVersion = "2.21.4"
 val junitVersion = "6.0.1"
 val simulacronVersion = "0.12.0"
 
