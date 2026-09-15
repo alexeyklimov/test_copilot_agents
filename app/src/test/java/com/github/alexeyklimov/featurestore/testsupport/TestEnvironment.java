@@ -32,7 +32,7 @@ import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
     private static final Pattern READ_QUERY_PATTERN = Pattern.compile(
-            "^SELECT feature_id, value FROM [a-z_]+ WHERE key_id = \\d+ AND entity = 0x[0-9a-f]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
+            "^SELECT feature_id, value FROM (.+) WHERE key_id = \\d+ AND entity = 0x[0-9a-f]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
     private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-f]+)");
     private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
 
@@ -61,7 +61,7 @@ public final class TestEnvironment implements AutoCloseable {
     public static TestEnvironment start(FeatureCatalog catalog) throws Exception {
         var simulacron = Server.builder().build();
         var node = simulacron.register(NodeSpec.builder().build());
-        ((BoundDataCenter) node.getDataCenter()).getStubStore().register(new PseudoRandomQueryPrime());
+        fallbackStubStore(node).register(new PseudoRandomQueryPrime());
         var allocator = new RootAllocator();
         var address = (InetSocketAddress) node.getAddress();
         waitUntilListening(address);
@@ -165,6 +165,13 @@ public final class TestEnvironment implements AutoCloseable {
         return columnTypes;
     }
 
+    private static com.datastax.oss.simulacron.server.StubStore fallbackStubStore(BoundNode node) {
+        if (node.getDataCenter() instanceof BoundDataCenter dataCenter) {
+            return dataCenter.getStubStore();
+        }
+        throw new IllegalStateException("Expected Simulacron server node to use BoundDataCenter, got " + node.getDataCenter().getClass().getName());
+    }
+
     private static final class PseudoRandomQueryPrime extends StubMapping {
         @Override
         public boolean matches(com.datastax.oss.protocol.internal.Frame frame) {
@@ -201,7 +208,7 @@ public final class TestEnvironment implements AutoCloseable {
             if (!matcher.find()) {
                 return new int[0];
             }
-            return java.util.Arrays.stream(matcher.group(1).split(",\\s*"))
+            return java.util.Arrays.stream(matcher.group(2).split(",\\s*"))
                     .mapToInt(Integer::parseInt)
                     .toArray();
         }

@@ -24,14 +24,17 @@ class LegacyReadApiLoadTest {
 
             for (var future : futures) {
                 HttpResponse<String> response = future.get();
+                var user1 = entityResponse(response.body(), "user-1");
+                var user42 = entityResponse(response.body(), "user-42");
+                var user100 = entityResponse(response.body(), "user-100");
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertThat(countOccurrences(response.body(), "\"key\":\"user_id\"")).isEqualTo(100);
                 assertThat(countOccurrences(response.body(), "\"feature600\":")).isEqualTo(100);
-                assertThat(response.body()).contains("\"key_value\":\"user-100\",\"features\":{\"feature1\":"
-                        + TestEnvironment.pseudoRandomValue("user-100", 1001)
-                        + ",");
-                assertThat(response.body()).contains("\"feature600\":"
-                        + TestEnvironment.pseudoRandomValue("user-100", 1600));
+                assertThat(user1).contains("\"feature1\":" + TestEnvironment.pseudoRandomValue("user-1", 1001));
+                assertThat(user1).contains("\"feature600\":" + TestEnvironment.pseudoRandomValue("user-1", 1600));
+                assertThat(user42).contains("\"feature321\":" + TestEnvironment.pseudoRandomValue("user-42", 1321));
+                assertThat(user100).contains("\"feature1\":" + TestEnvironment.pseudoRandomValue("user-100", 1001));
+                assertThat(user100).contains("\"feature600\":" + TestEnvironment.pseudoRandomValue("user-100", 1600));
             }
         }
     }
@@ -62,5 +65,11 @@ class LegacyReadApiLoadTest {
             offset += needle.length();
         }
         return count;
+    }
+
+    private static String entityResponse(String body, String entity) {
+        var start = body.indexOf("\"key_value\":\"" + entity + "\"");
+        var end = body.indexOf("}}", start);
+        return body.substring(start, end + 2);
     }
 }
