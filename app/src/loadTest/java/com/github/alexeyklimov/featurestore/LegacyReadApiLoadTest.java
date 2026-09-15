@@ -2,33 +2,28 @@ package com.github.alexeyklimov.featurestore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.JsonToken;
 import com.github.alexeyklimov.featurestore.testsupport.TestCatalogs;
 import com.github.alexeyklimov.featurestore.testsupport.TestEnvironment;
+import java.io.IOException;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 class LegacyReadApiLoadTest {
+    private static final JsonFactory JSON_FACTORY = new JsonFactory();
+
     @Test
     @Timeout(60)
     void handlesConcurrentHundredBySixHundredRequests() throws Exception {
         try (var environment = TestEnvironment.start(TestCatalogs.heavyCatalog(600));
              var executor = Executors.newFixedThreadPool(8)) {
-            var featureIds = IntStream.rangeClosed(1001, 1600).toArray();
-            for (int entityIndex = 1; entityIndex <= 100; entityIndex++) {
-                var values = new LinkedHashMap<Integer, Integer>();
-                for (int featureId : featureIds) {
-                    values.put(featureId, featureId + entityIndex);
-                }
-                environment.primeRows(
-                        TestEnvironment.readQuery("user_features", 1, "user-" + entityIndex, featureIds),
-                        values);
-            }
-
             var requestBody = heavyRequest();
             var futures = IntStream.range(0, 8)
                     .mapToObj(index -> executor.submit(() -> environment.post("tenant-a", requestBody)))
@@ -38,9 +33,30 @@ class LegacyReadApiLoadTest {
                 HttpResponse<String> response = future.get();
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertThat(countOccurrences(response.body(), "\"key\":\"user_id\"")).isEqualTo(100);
-                assertThat(response.body()).contains("\"feature600\":1700");
+                assertThat(countOccurrences(response.body(), "\"feature600\":")).isEqualTo(100);
+                var entities = responseEntities(response.body());
+                assertThat(entities).hasSize(100);
+                var user1 = entities.get("user-1");
+                var user42 = entities.get("user-42");
+                var user100 = entities.get("user-100");
+                assertThat(user1).containsEntry("feature1", TestEnvironment.pseudoRandomValue("user-1", 1001));
+                assertThat(user1).containsEntry("feature600", TestEnvironment.pseudoRandomValue("user-1", 1600));
+                assertThat(user42).containsEntry("feature321", TestEnvironment.pseudoRandomValue("user-42", 1321));
+                assertThat(user100).containsEntry("feature1", TestEnvironment.pseudoRandomValue("user-100", 1001));
+                assertThat(user100).containsEntry("feature600", TestEnvironment.pseudoRandomValue("user-100", 1600));
             }
         }
+    }
+
+    @Test
+    void parsesEntityFeaturesFromJsonResponse() throws Exception {
+        var entities = responseEntities("""
+                [{"key":"user_id","features":{"feature2":22,"feature1":11},"key_value":"user-1"},{"key":"user_id","key_value":"user-2","features":{"feature1":33}}]
+                """.trim());
+
+        assertThat(entities).containsOnlyKeys("user-1", "user-2");
+        assertThat(entities.get("user-1")).containsEntry("feature1", 11).containsEntry("feature2", 22);
+        assertThat(entities.get("user-2")).containsEntry("feature1", 33);
     }
 
     private static String heavyRequest() {
@@ -69,5 +85,46 @@ class LegacyReadApiLoadTest {
             offset += needle.length();
         }
         return count;
+    }
+
+    private static Map<String, Map<String, Integer>> responseEntities(String body) throws IOException {
+        var entities = new LinkedHashMap<String, Map<String, Integer>>();
+        try (var parser = JSON_FACTORY.createParser(body)) {
+            require(parser.nextToken() == JsonToken.START_ARRAY, "Response must start with a JSON array");
+            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                require(parser.currentToken() == JsonToken.START_OBJECT, "Each response entry must be a JSON object");
+                var keyValue = "";
+                Map<String, Integer> features = Map.of();
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    var fieldName = parser.currentName();
+                    parser.nextToken();
+                    switch (fieldName) {
+                        case "key_value" -> keyValue = parser.getValueAsString();
+                        case "features" -> features = readFeatures(parser);
+                        default -> parser.skipChildren();
+                    }
+                }
+                require(!entities.containsKey(keyValue), "Duplicate entity in response: " + keyValue);
+                entities.put(keyValue, features);
+            }
+        }
+        return entities;
+    }
+
+    private static Map<String, Integer> readFeatures(com.fasterxml.jackson.core.JsonParser parser) throws IOException {
+        var features = new LinkedHashMap<String, Integer>();
+        require(parser.currentToken() == JsonToken.START_OBJECT, "'features' must be a JSON object");
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            var featureName = parser.currentName();
+            parser.nextToken();
+            features.put(featureName, parser.getIntValue());
+        }
+        return features;
+    }
+
+    private static void require(boolean condition, String message) throws IOException {
+        if (!condition) {
+            throw new IOException(message);
+        }
     }
 }
