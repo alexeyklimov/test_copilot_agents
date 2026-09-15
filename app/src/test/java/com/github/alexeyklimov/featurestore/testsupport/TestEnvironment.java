@@ -208,7 +208,7 @@ public final class TestEnvironment implements AutoCloseable {
             if (!matcher.find()) {
                 return new int[0];
             }
-            return java.util.Arrays.stream(matcher.group(2).split(",\\s*"))
+            return java.util.Arrays.stream(matcher.group(1).split(",\\s*"))
                     .mapToInt(Integer::parseInt)
                     .toArray();
         }
