@@ -4,9 +4,11 @@ import java.util.List;
 import java.util.Set;
 
 public final class FeatureCatalogDefaults {
+    /** Скрывает создание набора значений по умолчанию. */
     private FeatureCatalogDefaults() {
     }
 
+    /** Создает каталог по умолчанию для PoC. */
     public static FeatureCatalog create() {
         var userId = FeatureCatalog.KeyType.of(
                 "user_id",

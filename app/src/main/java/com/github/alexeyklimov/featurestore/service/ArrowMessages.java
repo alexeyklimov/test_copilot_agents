@@ -23,13 +23,16 @@ public final class ArrowMessages {
             new Field("feature_id", FieldType.notNullable(new ArrowType.Int(32, true)), null),
             new Field("value", FieldType.notNullable(ArrowType.Binary.INSTANCE), null)));
 
+    /** Скрывает создание утилитарного класса. */
     private ArrowMessages() {
     }
 
+    /** Создает Arrow-таблицу для входных ключей. */
     static VectorSchemaRoot newRequestRoot(BufferAllocator allocator) {
         return VectorSchemaRoot.create(REQUEST_SCHEMA, allocator);
     }
 
+    /** Создает Arrow-таблицу для результатов чтения. */
     static VectorSchemaRoot newResultRoot(BufferAllocator allocator) {
         return VectorSchemaRoot.create(RESULT_SCHEMA, allocator);
     }
@@ -41,6 +44,7 @@ public final class ArrowMessages {
         private final long featureReferenceCount;
         private final long arrowBytes;
 
+        /** Создает контейнер запроса арендатора. */
         public ArrowTenantRequest(
                 BufferAllocator allocator,
                 List<SliceReadRequest> sliceRequests,
@@ -55,22 +59,27 @@ public final class ArrowMessages {
             this.arrowBytes = arrowBytes;
         }
 
+        /** Возвращает список запросов по срезам. */
         public List<SliceReadRequest> sliceRequests() {
             return sliceRequests;
         }
 
+        /** Возвращает число ключей в запросе. */
         public long keyCount() {
             return keyCount;
         }
 
+        /** Возвращает число ссылок на фичи. */
         public long featureReferenceCount() {
             return featureReferenceCount;
         }
 
+        /** Возвращает объем Arrow-данных в байтах. */
         public long arrowBytes() {
             return arrowBytes;
         }
 
+        /** Освобождает все Arrow-ресурсы запроса. */
         @Override
         public void close() {
             for (var request : sliceRequests) {
@@ -85,44 +94,54 @@ public final class ArrowMessages {
         private final VectorSchemaRoot root;
         private final int[] featureIds;
 
+        /** Создает запрос чтения по конкретному срезу. */
         public SliceReadRequest(FeatureCatalog.KeyType keyType, VectorSchemaRoot root, int[] featureIds) {
             this.keyType = keyType;
             this.root = root;
             this.featureIds = featureIds;
         }
 
+        /** Возвращает тип ключа для текущего среза. */
         public FeatureCatalog.KeyType keyType() {
             return keyType;
         }
 
+        /** Возвращает Arrow-таблицу исходного запроса. */
         public VectorSchemaRoot root() {
             return root;
         }
 
+        /** Возвращает идентификаторы запрошенных фичей. */
         public int[] featureIds() {
             return featureIds;
         }
 
+        /** Возвращает число строк в срезе. */
         public int rowCount() {
             return root.getRowCount();
         }
 
+        /** Возвращает порядковый номер исходного ключа. */
         public long requestOrdinal(int index) {
             return ordinalVector().get(index);
         }
 
+        /** Возвращает бинарное значение сущности. */
         public byte[] entity(int index) {
             return entityVector().get(index);
         }
 
+        /** Возвращает вектор порядковых номеров. */
         private BigIntVector ordinalVector() {
             return (BigIntVector) root.getVector("request_ordinal");
         }
 
+        /** Возвращает вектор сущностей. */
         private VarBinaryVector entityVector() {
             return (VarBinaryVector) root.getVector("entity");
         }
 
+        /** Освобождает ресурсы среза. */
         @Override
         public void close() {
             root.close();
@@ -136,6 +155,7 @@ public final class ArrowMessages {
         private final VarBinaryVector entities;
         private int rowCount;
 
+        /** Создает билдер Arrow-таблицы для ключей. */
         RequestTableBuilder(FeatureCatalog.KeyType keyType, BufferAllocator allocator) {
             this.keyType = keyType;
             this.root = newRequestRoot(allocator);
@@ -144,22 +164,26 @@ public final class ArrowMessages {
             root.allocateNew();
         }
 
+        /** Добавляет ключ в Arrow-таблицу запроса. */
         void append(long ordinal, byte[] entity) {
             ordinals.setSafe(rowCount, ordinal);
             entities.setSafe(rowCount, entity);
             rowCount++;
         }
 
+        /** Возвращает текущий размер буферов таблицы. */
         long bufferSize() {
             root.setRowCount(rowCount);
             return root.getFieldVectors().stream().mapToLong(vector -> vector.getBufferSize()).sum();
         }
 
+        /** Собирает итоговый запрос чтения по срезу. */
         SliceReadRequest build(int[] featureIds) {
             root.setRowCount(rowCount);
             return new SliceReadRequest(keyType, root, featureIds);
         }
 
+        /** Освобождает ресурсы билдера. */
         @Override
         public void close() {
             root.close();
@@ -168,6 +192,7 @@ public final class ArrowMessages {
 
     @FunctionalInterface
     public interface ResultBatchConsumer {
+        /** Принимает очередной батч результата. */
         void accept(SliceReadRequest request, VectorSchemaRoot batch) throws Exception;
     }
 
@@ -181,6 +206,7 @@ public final class ArrowMessages {
         private final int batchSize;
         private int rowCount;
 
+        /** Создает стример батчей результата. */
         public ResultTableStreamer(BufferAllocator allocator, int batchSize) {
             this.allocator = allocator;
             this.root = newResultRoot(allocator);
@@ -192,6 +218,7 @@ public final class ArrowMessages {
             root.allocateNew();
         }
 
+        /** Добавляет строку результата и сбрасывает батч при необходимости. */
         public void append(long ordinal, byte[] entity, int featureId, byte[] value, SliceReadRequest request, ResultBatchConsumer consumer)
                 throws Exception {
             ordinals.setSafe(rowCount, ordinal);
@@ -204,6 +231,7 @@ public final class ArrowMessages {
             }
         }
 
+        /** Отправляет накопленный батч потребителю. */
         public void flush(SliceReadRequest request, ResultBatchConsumer consumer) throws Exception {
             if (rowCount == 0) {
                 return;
@@ -213,12 +241,14 @@ public final class ArrowMessages {
             clear();
         }
 
+        /** Очищает буферы для следующего батча. */
         private void clear() {
             rowCount = 0;
             root.clear();
             root.allocateNew();
         }
 
+        /** Освобождает ресурсы стримера результатов. */
         @Override
         public void close() {
             root.close();
@@ -226,6 +256,7 @@ public final class ArrowMessages {
         }
     }
 
+    /** Считает общий размер Arrow-представления запроса. */
     static long totalArrowBytes(List<SliceReadRequest> requests) {
         var size = 0L;
         for (var request : requests) {

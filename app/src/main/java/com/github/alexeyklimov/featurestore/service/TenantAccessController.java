@@ -6,10 +6,12 @@ import com.github.alexeyklimov.featurestore.service.ArrowMessages.ArrowTenantReq
 public final class TenantAccessController {
     private final FeatureCatalog catalog;
 
+    /** Создает контроллер доступа по каталогу. */
     public TenantAccessController(FeatureCatalog catalog) {
         this.catalog = catalog;
     }
 
+    /** Проверяет арендатора, доступные ключи и квоты. */
     public ArrowTenantRequest authorize(String tenantId, ArrowTenantRequest request) {
         var policy = catalog.findTenantPolicy(tenantId)
                 .orElseThrow(() -> new ReadRequestException(403, "Unknown tenant: " + tenantId));
