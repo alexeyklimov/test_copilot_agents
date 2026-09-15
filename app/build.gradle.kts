@@ -6,7 +6,7 @@ repositories {
     mavenCentral()
 }
 
-val arrowVersion = "25.0.1"
+val arrowVersion = "19.0.0"
 val cassandraDriverVersion = "4.19.3"
 val jacksonVersion = "2.20.0"
 val junitVersion = "6.0.1"
@@ -14,6 +14,20 @@ val simulacronVersion = "0.13.0.0"
 
 val functionalTestSourceSet = sourceSets.create("functionalTest")
 val loadTestSourceSet = sourceSets.create("loadTest")
+
+configurations[functionalTestSourceSet.implementationConfigurationName].extendsFrom(configurations.testImplementation.get())
+configurations[functionalTestSourceSet.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
+configurations[loadTestSourceSet.implementationConfigurationName].extendsFrom(configurations.testImplementation.get())
+configurations[loadTestSourceSet.runtimeOnlyConfigurationName].extendsFrom(configurations.testRuntimeOnly.get())
+
+functionalTestSourceSet.compileClasspath += sourceSets.main.get().output
+functionalTestSourceSet.runtimeClasspath += sourceSets.main.get().output
+functionalTestSourceSet.compileClasspath += sourceSets.test.get().output
+functionalTestSourceSet.runtimeClasspath += sourceSets.test.get().output
+loadTestSourceSet.compileClasspath += sourceSets.main.get().output
+loadTestSourceSet.runtimeClasspath += sourceSets.main.get().output
+loadTestSourceSet.compileClasspath += sourceSets.test.get().output
+loadTestSourceSet.runtimeClasspath += sourceSets.test.get().output
 
 dependencies {
     implementation("org.apache.cassandra:java-driver-core:$cassandraDriverVersion")
@@ -26,15 +40,11 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.assertj:assertj-core:4.0.0-M1")
 
-    add(functionalTestSourceSet.implementationConfigurationName, sourceSets.main.get().output)
-    add(functionalTestSourceSet.implementationConfigurationName, configurations.testRuntimeClasspath.get())
     add(functionalTestSourceSet.implementationConfigurationName, "org.junit.jupiter:junit-jupiter:$junitVersion")
     add(functionalTestSourceSet.runtimeOnlyConfigurationName, "org.junit.platform:junit-platform-launcher")
     add(functionalTestSourceSet.implementationConfigurationName, "org.assertj:assertj-core:4.0.0-M1")
     add(functionalTestSourceSet.implementationConfigurationName, "com.scylladb.oss.simulacron:simulacron-native-server:$simulacronVersion")
 
-    add(loadTestSourceSet.implementationConfigurationName, sourceSets.main.get().output)
-    add(loadTestSourceSet.implementationConfigurationName, configurations.testRuntimeClasspath.get())
     add(loadTestSourceSet.implementationConfigurationName, "org.junit.jupiter:junit-jupiter:$junitVersion")
     add(loadTestSourceSet.runtimeOnlyConfigurationName, "org.junit.platform:junit-platform-launcher")
     add(loadTestSourceSet.implementationConfigurationName, "org.assertj:assertj-core:4.0.0-M1")

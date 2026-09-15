@@ -53,8 +53,11 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
 
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             try (exchange; var requestBody = exchange.getRequestBody()) {
+                var preparedRead = readService.prepare(tenantId, requestBody);
                 exchange.sendResponseHeaders(200, 0);
-                readService.handle(tenantId, requestBody, exchange.getResponseBody());
+                try (preparedRead) {
+                    preparedRead.stream(exchange.getResponseBody());
+                }
             } catch (ReadRequestException exception) {
                 if (!exchange.getResponseHeaders().containsKey("X-Error")) {
                     writeError(exchange, exception.statusCode(), exception.getMessage());

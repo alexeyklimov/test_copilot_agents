@@ -2,7 +2,6 @@ package com.github.alexeyklimov.featurestore.service;
 
 import com.github.alexeyklimov.featurestore.cassandra.CassandraSliceReadPipe;
 import java.io.InputStream;
-import java.io.OutputStream;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class LegacyReadService {
@@ -23,15 +22,32 @@ public final class LegacyReadService {
         this.sliceReadPipe = sliceReadPipe;
     }
 
-    public void handle(String tenantId, InputStream inputStream, OutputStream outputStream) throws Exception {
-        try (var request = accessController.authorize(tenantId, codec.parse(inputStream, allocator));
-             var writer = codec.newResponseWriter(outputStream)) {
-            for (var sliceRequest : request.sliceRequests()) {
-                sliceReadPipe.stream(
-                        sliceRequest,
-                        allocator,
-                        (currentRequest, batch) -> writer.consume(currentRequest, batch));
+    public PreparedRead prepare(String tenantId, InputStream inputStream) throws Exception {
+        var request = accessController.authorize(tenantId, codec.parse(inputStream, allocator));
+        return new PreparedRead(request);
+    }
+
+    public final class PreparedRead implements AutoCloseable {
+        private final ArrowMessages.ArrowTenantRequest request;
+
+        private PreparedRead(ArrowMessages.ArrowTenantRequest request) {
+            this.request = request;
+        }
+
+        public void stream(java.io.OutputStream outputStream) throws Exception {
+            try (var writer = codec.newResponseWriter(outputStream)) {
+                for (var sliceRequest : request.sliceRequests()) {
+                    sliceReadPipe.stream(
+                            sliceRequest,
+                            allocator,
+                            (currentRequest, batch) -> writer.consume(currentRequest, batch));
+                }
             }
+        }
+
+        @Override
+        public void close() {
+            request.close();
         }
     }
 }

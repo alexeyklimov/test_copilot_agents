@@ -13,7 +13,7 @@ import org.apache.arrow.vector.types.pojo.Field;
 import org.apache.arrow.vector.types.pojo.FieldType;
 import org.apache.arrow.vector.types.pojo.Schema;
 
-final class ArrowMessages {
+public final class ArrowMessages {
     private static final Schema REQUEST_SCHEMA = new Schema(List.of(
             new Field("request_ordinal", FieldType.notNullable(new ArrowType.Int(64, true)), null),
             new Field("entity", FieldType.notNullable(ArrowType.Binary.INSTANCE), null)));
@@ -34,14 +34,14 @@ final class ArrowMessages {
         return VectorSchemaRoot.create(RESULT_SCHEMA, allocator);
     }
 
-    static final class ArrowTenantRequest implements AutoCloseable {
+    public static final class ArrowTenantRequest implements AutoCloseable {
         private final BufferAllocator allocator;
         private final List<SliceReadRequest> sliceRequests;
         private final long keyCount;
         private final long featureReferenceCount;
         private final long arrowBytes;
 
-        ArrowTenantRequest(
+        public ArrowTenantRequest(
                 BufferAllocator allocator,
                 List<SliceReadRequest> sliceRequests,
                 long keyCount,
@@ -55,19 +55,19 @@ final class ArrowMessages {
             this.arrowBytes = arrowBytes;
         }
 
-        List<SliceReadRequest> sliceRequests() {
+        public List<SliceReadRequest> sliceRequests() {
             return sliceRequests;
         }
 
-        long keyCount() {
+        public long keyCount() {
             return keyCount;
         }
 
-        long featureReferenceCount() {
+        public long featureReferenceCount() {
             return featureReferenceCount;
         }
 
-        long arrowBytes() {
+        public long arrowBytes() {
             return arrowBytes;
         }
 
@@ -80,38 +80,38 @@ final class ArrowMessages {
         }
     }
 
-    static final class SliceReadRequest implements AutoCloseable {
+    public static final class SliceReadRequest implements AutoCloseable {
         private final FeatureCatalog.KeyType keyType;
         private final VectorSchemaRoot root;
         private final int[] featureIds;
 
-        SliceReadRequest(FeatureCatalog.KeyType keyType, VectorSchemaRoot root, int[] featureIds) {
+        public SliceReadRequest(FeatureCatalog.KeyType keyType, VectorSchemaRoot root, int[] featureIds) {
             this.keyType = keyType;
             this.root = root;
             this.featureIds = featureIds;
         }
 
-        FeatureCatalog.KeyType keyType() {
+        public FeatureCatalog.KeyType keyType() {
             return keyType;
         }
 
-        VectorSchemaRoot root() {
+        public VectorSchemaRoot root() {
             return root;
         }
 
-        int[] featureIds() {
+        public int[] featureIds() {
             return featureIds;
         }
 
-        int rowCount() {
+        public int rowCount() {
             return root.getRowCount();
         }
 
-        long requestOrdinal(int index) {
+        public long requestOrdinal(int index) {
             return ordinalVector().get(index);
         }
 
-        byte[] entity(int index) {
+        public byte[] entity(int index) {
             return entityVector().get(index);
         }
 
@@ -167,11 +167,11 @@ final class ArrowMessages {
     }
 
     @FunctionalInterface
-    interface ResultBatchConsumer {
+    public interface ResultBatchConsumer {
         void accept(SliceReadRequest request, VectorSchemaRoot batch) throws Exception;
     }
 
-    static final class ResultTableStreamer implements AutoCloseable {
+    public static final class ResultTableStreamer implements AutoCloseable {
         private final BufferAllocator allocator;
         private final VectorSchemaRoot root;
         private final BigIntVector ordinals;
@@ -181,7 +181,7 @@ final class ArrowMessages {
         private final int batchSize;
         private int rowCount;
 
-        ResultTableStreamer(BufferAllocator allocator, int batchSize) {
+        public ResultTableStreamer(BufferAllocator allocator, int batchSize) {
             this.allocator = allocator;
             this.root = newResultRoot(allocator);
             this.ordinals = (BigIntVector) root.getVector("request_ordinal");
@@ -192,7 +192,7 @@ final class ArrowMessages {
             root.allocateNew();
         }
 
-        void append(long ordinal, byte[] entity, int featureId, byte[] value, SliceReadRequest request, ResultBatchConsumer consumer)
+        public void append(long ordinal, byte[] entity, int featureId, byte[] value, SliceReadRequest request, ResultBatchConsumer consumer)
                 throws Exception {
             ordinals.setSafe(rowCount, ordinal);
             entities.setSafe(rowCount, entity);
@@ -204,7 +204,7 @@ final class ArrowMessages {
             }
         }
 
-        void flush(SliceReadRequest request, ResultBatchConsumer consumer) throws Exception {
+        public void flush(SliceReadRequest request, ResultBatchConsumer consumer) throws Exception {
             if (rowCount == 0) {
                 return;
             }
