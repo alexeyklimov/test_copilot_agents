@@ -27,13 +27,14 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.SplittableRandom;
+import java.util.Objects;
 import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
     private static final String READ_QUERY_PREFIX = "SELECT feature_id, value FROM ";
-    private static final Pattern FEATURE_IDS_PATTERN = Pattern.compile(" AND feature_id IN \\(([^)]+)\\)$");
+    private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-f]+)");
+    private static final Pattern FEATURE_IDS_PATTERN = Pattern.compile(" AND feature_id IN \\(([^)]+)\\);?$");
     private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
 
     private final Server simulacron;
@@ -177,14 +178,19 @@ public final class TestEnvironment implements AutoCloseable {
         ) {
             var query = (com.datastax.oss.protocol.internal.request.Query) frame.message;
             var rows = new ArrayList<LinkedHashMap<String, Object>>();
-            var random = new SplittableRandom(Integer.toUnsignedLong(query.query.hashCode()));
+            var entityLiteral = entityLiteral(query.query);
             for (int featureId : featureIds(query.query)) {
                 var row = new LinkedHashMap<String, Object>();
                 row.put("feature_id", featureId);
-                row.put("value", ByteBuffer.wrap(intBytes(1 + Math.floorMod(random.nextInt() ^ featureId, 10_000))));
+                row.put("value", ByteBuffer.wrap(intBytes(1 + Math.floorMod(Objects.hash(entityLiteral, featureId), 10_000))));
                 rows.add(row);
             }
             return new SuccessResult(rows, READ_COLUMN_TYPES).toActions(node, frame);
+        }
+
+        private static String entityLiteral(String query) {
+            var matcher = ENTITY_PATTERN.matcher(query);
+            return matcher.find() ? matcher.group(1) : "";
         }
 
         private static int[] featureIds(String query) {
