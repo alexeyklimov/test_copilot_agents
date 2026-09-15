@@ -68,8 +68,23 @@ class LegacyReadApiLoadTest {
     }
 
     private static String entityResponse(String body, String entity) {
-        var start = body.indexOf("\"key_value\":\"" + entity + "\"");
-        var end = body.indexOf("}}", start);
-        return body.substring(start, end + 2);
+        var marker = body.indexOf("\"key_value\":\"" + entity + "\"");
+        if (marker < 0) {
+            throw new IllegalArgumentException("Entity not found in response: " + entity);
+        }
+        var start = body.lastIndexOf('{', marker);
+        var depth = 0;
+        for (int index = start; index < body.length(); index++) {
+            var current = body.charAt(index);
+            if (current == '{') {
+                depth++;
+            } else if (current == '}') {
+                depth--;
+                if (depth == 0) {
+                    return body.substring(start, index + 1);
+                }
+            }
+        }
+        throw new IllegalArgumentException("Entity not found in response: " + entity);
     }
 }
