@@ -121,7 +121,7 @@ class LegacyReadApiLoadTest {
         return features;
     }
 
-    private static void require(boolean condition, String message) {
+    private static void require(boolean condition, String message) throws IOException {
         if (!condition) {
             throw new IOException(message);
         }
