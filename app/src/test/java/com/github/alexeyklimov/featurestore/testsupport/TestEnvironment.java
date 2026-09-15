@@ -27,13 +27,16 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
-    private static final Pattern READ_QUERY_PATTERN = Pattern.compile(
-            "^SELECT feature_id, value FROM (?:.+?) WHERE key_id = \\d+ AND entity = 0x[0-9a-fA-F]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
-    private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-fA-F]+)");
+    private static final Pattern READ_QUERY_PATTERN = Pattern.compile("^SELECT\\s+feature_id\\s*,\\s*value\\s+FROM\\s+.+", Pattern.CASE_INSENSITIVE);
+    private static final Pattern KEY_ID_PATTERN = Pattern.compile("\\bWHERE\\s+key_id\\s*=\\s*\\d+\\b", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ENTITY_PATTERN = Pattern.compile("\\bentity\\s*=\\s*(0x[0-9a-fA-F]+)", Pattern.CASE_INSENSITIVE);
+    private static final Pattern FEATURE_IDS_PATTERN = Pattern.compile("\\bfeature_id\\s+IN\\s*\\((\\d+(?:\\s*,\\s*\\d+)*)\\)\\s*;?$", Pattern.CASE_INSENSITIVE);
     private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
 
     private final Server simulacron;
@@ -42,13 +45,15 @@ public final class TestEnvironment implements AutoCloseable {
     private final CqlSession session;
     private final FeatureStoreHttpServer server;
     private final HttpClient client;
+    private final Set<String> primedQueries;
 
     private TestEnvironment(
             Server simulacron,
             BoundNode node,
             RootAllocator allocator,
             CqlSession session,
-            FeatureStoreHttpServer server
+            FeatureStoreHttpServer server,
+            Set<String> primedQueries
     ) {
         this.simulacron = simulacron;
         this.node = node;
@@ -56,12 +61,14 @@ public final class TestEnvironment implements AutoCloseable {
         this.session = session;
         this.server = server;
         this.client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        this.primedQueries = primedQueries;
     }
 
     public static TestEnvironment start(FeatureCatalog catalog) throws Exception {
         var simulacron = Server.builder().build();
         var node = simulacron.register(NodeSpec.builder().build());
-        fallbackStubStore(node).register(new PseudoRandomQueryPrime());
+        var primedQueries = ConcurrentHashMap.<String>newKeySet();
+        fallbackStubStore(node).register(new PseudoRandomQueryPrime(primedQueries));
         var allocator = new RootAllocator();
         var address = (InetSocketAddress) node.getAddress();
         waitUntilListening(address);
@@ -71,7 +78,7 @@ public final class TestEnvironment implements AutoCloseable {
                 .build();
         var server = FeatureStoreApplication.createServer(0, allocator, session, catalog);
         server.start();
-        return new TestEnvironment(simulacron, node, allocator, session, server);
+        return new TestEnvironment(simulacron, node, allocator, session, server, primedQueries);
     }
 
     public void primeRows(String query, Map<Integer, Integer> featureValues) {
@@ -132,6 +139,9 @@ public final class TestEnvironment implements AutoCloseable {
     }
 
     private void prime(Prime prime) {
+        if (prime.getPrimedRequest().when instanceof com.datastax.oss.simulacron.common.request.Query query) {
+            primedQueries.add(query.query);
+        }
         node.prime(prime);
     }
 
@@ -170,21 +180,32 @@ public final class TestEnvironment implements AutoCloseable {
         if (dataCenter instanceof BoundDataCenter boundDataCenter) {
             return boundDataCenter.getStubStore();
         }
-        if (dataCenter == null) {
-            throw new IllegalStateException("Expected Simulacron server node to have a datacenter");
-        }
-        else {
-            throw new IllegalStateException("Expected Simulacron server node to use BoundDataCenter, got " + dataCenter.getClass().getName());
-        }
+        return node.getStubStore();
     }
 
     private static final class PseudoRandomQueryPrime extends StubMapping {
+        private final Set<String> primedQueries;
+
+        private PseudoRandomQueryPrime(Set<String> primedQueries) {
+            this.primedQueries = primedQueries;
+        }
+
+        @Override
+        public boolean matches(com.datastax.oss.simulacron.common.cluster.AbstractNode node, com.datastax.oss.protocol.internal.Frame frame) {
+            return matches(frame)
+                    && frame.message instanceof com.datastax.oss.protocol.internal.request.Query query
+                    && !primedQueries.contains(query.query);
+        }
+
         @Override
         public boolean matches(com.datastax.oss.protocol.internal.Frame frame) {
             if (!(frame.message instanceof com.datastax.oss.protocol.internal.request.Query query)) {
                 return false;
             }
-            return READ_QUERY_PATTERN.matcher(query.query).matches();
+            return READ_QUERY_PATTERN.matcher(query.query).find()
+                    && KEY_ID_PATTERN.matcher(query.query).find()
+                    && ENTITY_PATTERN.matcher(query.query).find()
+                    && FEATURE_IDS_PATTERN.matcher(query.query).find();
         }
 
         @Override
@@ -210,7 +231,7 @@ public final class TestEnvironment implements AutoCloseable {
         }
 
         private static int[] featureIds(String query) {
-            var matcher = READ_QUERY_PATTERN.matcher(query);
+            var matcher = FEATURE_IDS_PATTERN.matcher(query);
             if (!matcher.find()) {
                 return new int[0];
             }

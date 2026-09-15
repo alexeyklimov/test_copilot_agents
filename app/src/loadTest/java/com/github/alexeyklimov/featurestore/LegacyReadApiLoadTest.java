@@ -35,6 +35,7 @@ class LegacyReadApiLoadTest {
                 assertThat(countOccurrences(response.body(), "\"key\":\"user_id\"")).isEqualTo(100);
                 assertThat(countOccurrences(response.body(), "\"feature600\":")).isEqualTo(100);
                 var entities = responseEntities(response.body());
+                assertThat(entities).hasSize(100);
                 var user1 = entities.get("user-1");
                 var user42 = entities.get("user-42");
                 var user100 = entities.get("user-100");
@@ -44,6 +45,17 @@ class LegacyReadApiLoadTest {
                 assertThat(user100).containsEntry("feature1", TestEnvironment.pseudoRandomValue("user-100", 1001));
                 assertThat(user100).containsEntry("feature600", TestEnvironment.pseudoRandomValue("user-100", 1600));
             }
+        }
+
+        @Test
+        void parsesEntityFeaturesFromJsonResponse() throws Exception {
+            var entities = responseEntities("""
+                    [{"key":"user_id","features":{"feature2":22,"feature1":11},"key_value":"user-1"},{"key":"user_id","key_value":"user-2","features":{"feature1":33}}]
+                    """.trim());
+
+            assertThat(entities).containsOnlyKeys("user-1", "user-2");
+            assertThat(entities.get("user-1")).containsEntry("feature1", 11).containsEntry("feature2", 22);
+            assertThat(entities.get("user-2")).containsEntry("feature1", 33);
         }
     }
 
