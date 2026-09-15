@@ -27,7 +27,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
@@ -208,7 +207,7 @@ public final class TestEnvironment implements AutoCloseable {
         }
 
         private static int pseudoRandomValue(String entityLiteral, int featureId) {
-            return 1 + Math.floorMod(Objects.hash(entityLiteral, featureId), 10_000);
+            return 1 + Math.floorMod((31 * entityLiteral.hashCode()) + featureId, 10_000);
         }
     }
 }
