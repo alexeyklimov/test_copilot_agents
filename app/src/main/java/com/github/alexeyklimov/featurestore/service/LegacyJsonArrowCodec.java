@@ -92,7 +92,6 @@ public final class LegacyJsonArrowCodec {
         }
 
         var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
-        long featureReferenceCount = 0;
         for (var featureName : requestedFeatures) {
             var feature = catalog.findFeature(featureName)
                     .orElseThrow(() -> new ReadRequestException(400, "Unknown feature: " + featureName));
@@ -109,7 +108,6 @@ public final class LegacyJsonArrowCodec {
                     .stream()
                     .mapToInt(Integer::intValue)
                     .toArray();
-            featureReferenceCount += (long) entry.getValue().bufferSize();
             requests.add(entry.getValue().build(featureIds));
         }
 
@@ -137,6 +135,7 @@ public final class LegacyJsonArrowCodec {
         private final JsonGenerator generator;
         private String currentKeyName;
         private String currentEntity;
+        private SliceReadRequest currentRequest;
         private Map<String, Object> currentFeatures;
         private boolean started;
 
@@ -158,6 +157,7 @@ public final class LegacyJsonArrowCodec {
                     flushCurrent();
                     currentKeyName = keyName;
                     currentEntity = entity;
+                    currentRequest = request;
                     currentFeatures = new LinkedHashMap<>();
                 }
                 var feature = request.keyType().featureById(featureIds.get(row));
@@ -180,12 +180,17 @@ public final class LegacyJsonArrowCodec {
             generator.writeStringField("key", currentKeyName);
             generator.writeStringField("key_value", currentEntity);
             generator.writeObjectFieldStart("features");
-            for (var entry : currentFeatures.entrySet()) {
-                generator.writeObjectField(entry.getKey(), entry.getValue());
+            for (var featureId : currentRequest.featureIds()) {
+                var feature = currentRequest.keyType().featureById(featureId);
+                var value = currentFeatures.get(feature.name());
+                if (value != null) {
+                    generator.writeObjectField(feature.name(), value);
+                }
             }
             generator.writeEndObject();
             generator.writeEndObject();
             currentFeatures = null;
+            currentRequest = null;
             generator.flush();
         }
 

@@ -10,7 +10,7 @@ val arrowVersion = "19.0.0"
 val cassandraDriverVersion = "4.19.3"
 val jacksonVersion = "2.20.0"
 val junitVersion = "6.0.1"
-val simulacronVersion = "0.13.0.0"
+val simulacronVersion = "0.12.0"
 
 val functionalTestSourceSet = sourceSets.create("functionalTest")
 val loadTestSourceSet = sourceSets.create("loadTest")
@@ -31,7 +31,7 @@ loadTestSourceSet.runtimeClasspath += sourceSets.test.get().output
 
 dependencies {
     implementation("org.apache.cassandra:java-driver-core:$cassandraDriverVersion")
-    implementation("org.apache.arrow:arrow-memory-netty:$arrowVersion")
+    implementation("org.apache.arrow:arrow-memory-unsafe:$arrowVersion")
     implementation("org.apache.arrow:arrow-vector:$arrowVersion")
     implementation("com.fasterxml.jackson.core:jackson-core:$jacksonVersion")
     runtimeOnly("org.slf4j:slf4j-simple:2.0.17")
@@ -39,16 +39,17 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:$junitVersion")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
     testImplementation("org.assertj:assertj-core:4.0.0-M1")
+    testImplementation("com.datastax.oss.simulacron:simulacron-native-server:$simulacronVersion")
 
     add(functionalTestSourceSet.implementationConfigurationName, "org.junit.jupiter:junit-jupiter:$junitVersion")
     add(functionalTestSourceSet.runtimeOnlyConfigurationName, "org.junit.platform:junit-platform-launcher")
     add(functionalTestSourceSet.implementationConfigurationName, "org.assertj:assertj-core:4.0.0-M1")
-    add(functionalTestSourceSet.implementationConfigurationName, "com.scylladb.oss.simulacron:simulacron-native-server:$simulacronVersion")
+    add(functionalTestSourceSet.implementationConfigurationName, "com.datastax.oss.simulacron:simulacron-native-server:$simulacronVersion")
 
     add(loadTestSourceSet.implementationConfigurationName, "org.junit.jupiter:junit-jupiter:$junitVersion")
     add(loadTestSourceSet.runtimeOnlyConfigurationName, "org.junit.platform:junit-platform-launcher")
     add(loadTestSourceSet.implementationConfigurationName, "org.assertj:assertj-core:4.0.0-M1")
-    add(loadTestSourceSet.implementationConfigurationName, "com.scylladb.oss.simulacron:simulacron-native-server:$simulacronVersion")
+    add(loadTestSourceSet.implementationConfigurationName, "com.datastax.oss.simulacron:simulacron-native-server:$simulacronVersion")
 }
 
 java {
@@ -59,10 +60,19 @@ java {
 
 application {
     mainClass = "com.github.alexeyklimov.featurestore.FeatureStoreApplication"
+    applicationDefaultJvmArgs = listOf(
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "-Darrow.memory.allocation.manager.type=Unsafe"
+    )
 }
 
 fun Test.configureJvm() {
-    jvmArgs("--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED")
+    jvmArgs(
+        "--add-opens=java.base/java.nio=ALL-UNNAMED",
+        "--enable-native-access=ALL-UNNAMED"
+    )
+    systemProperty("arrow.memory.allocation.manager.type", "Unsafe")
+    failOnNoDiscoveredTests = false
     useJUnitPlatform()
 }
 
@@ -75,7 +85,7 @@ val functionalTest = tasks.register<Test>("functionalTest") {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     testClassesDirs = functionalTestSourceSet.output.classesDirs
     classpath = functionalTestSourceSet.runtimeClasspath
-    shouldRunAfter(tasks.test)
+    mustRunAfter(tasks.test)
     configureJvm()
 }
 
@@ -84,7 +94,7 @@ val loadTest = tasks.register<Test>("loadTest") {
     group = LifecycleBasePlugin.VERIFICATION_GROUP
     testClassesDirs = loadTestSourceSet.output.classesDirs
     classpath = loadTestSourceSet.runtimeClasspath
-    shouldRunAfter(functionalTest)
+    mustRunAfter(functionalTest)
     configureJvm()
 }
 

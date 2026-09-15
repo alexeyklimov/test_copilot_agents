@@ -52,7 +52,7 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
             }
 
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            try (exchange; var requestBody = exchange.getRequestBody()) {
+            try (var requestBody = exchange.getRequestBody()) {
                 var preparedRead = readService.prepare(tenantId, requestBody);
                 exchange.sendResponseHeaders(200, 0);
                 try (preparedRead) {
@@ -64,6 +64,8 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
                 }
             } catch (Exception exception) {
                 writeError(exchange, 500, "Internal server error");
+            } finally {
+                exchange.close();
             }
         }
 

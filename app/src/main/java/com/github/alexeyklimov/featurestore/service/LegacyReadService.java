@@ -23,8 +23,13 @@ public final class LegacyReadService {
     }
 
     public PreparedRead prepare(String tenantId, InputStream inputStream) throws Exception {
-        var request = accessController.authorize(tenantId, codec.parse(inputStream, allocator));
-        return new PreparedRead(request);
+        var request = codec.parse(inputStream, allocator);
+        try {
+            return new PreparedRead(accessController.authorize(tenantId, request));
+        } catch (Exception exception) {
+            request.close();
+            throw exception;
+        }
     }
 
     public final class PreparedRead implements AutoCloseable {

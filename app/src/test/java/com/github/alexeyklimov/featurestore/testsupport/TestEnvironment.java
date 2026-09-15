@@ -11,6 +11,7 @@ import com.github.alexeyklimov.featurestore.http.FeatureStoreHttpServer;
 import com.github.alexeyklimov.featurestore.model.FeatureCatalog;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -49,10 +50,11 @@ public final class TestEnvironment implements AutoCloseable {
         var simulacron = Server.builder().build();
         var node = simulacron.register(NodeSpec.builder().build());
         var allocator = new RootAllocator();
-        var address = node.getAddress();
+        var address = (InetSocketAddress) node.getAddress();
+        waitUntilListening(address);
         var session = CqlSession.builder()
-                .addContactPoint(new InetSocketAddress(address.getAddress(), address.getPort()))
-                .withLocalDatacenter("datacenter1")
+                .addContactPoint(address)
+                .withLocalDatacenter("dummy")
                 .build();
         var server = FeatureStoreApplication.createServer(0, allocator, session, catalog);
         server.start();
@@ -123,5 +125,19 @@ public final class TestEnvironment implements AutoCloseable {
             builder.append(Character.forDigit(value & 0xF, 16));
         }
         return builder.toString();
+    }
+
+    private static void waitUntilListening(InetSocketAddress address) throws IOException, InterruptedException {
+        IOException lastError = null;
+        for (int attempt = 0; attempt < 20; attempt++) {
+            try (var socket = new Socket()) {
+                socket.connect(address, 250);
+                return;
+            } catch (IOException exception) {
+                lastError = exception;
+                Thread.sleep(100);
+            }
+        }
+        throw lastError;
     }
 }
