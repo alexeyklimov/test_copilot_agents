@@ -31,6 +31,7 @@ loadTestSourceSet.runtimeClasspath += sourceSets.test.get().output
 
 dependencies {
     implementation("org.apache.cassandra:java-driver-core:$cassandraDriverVersion")
+    implementation("org.apache.cassandra:java-driver-query-builder:$cassandraDriverVersion")
     implementation("org.apache.arrow:arrow-memory-unsafe:$arrowVersion")
     implementation("org.apache.arrow:arrow-vector:$arrowVersion")
     implementation("com.fasterxml.jackson.core:jackson-core:$jacksonVersion")
