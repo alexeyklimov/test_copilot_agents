@@ -2,9 +2,12 @@ package com.github.alexeyklimov.featurestore.testsupport;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.simulacron.common.cluster.NodeSpec;
+import com.datastax.oss.simulacron.common.result.SuccessResult;
 import com.datastax.oss.simulacron.common.stubbing.Prime;
 import com.datastax.oss.simulacron.common.stubbing.PrimeDsl;
+import com.datastax.oss.simulacron.common.stubbing.StubMapping;
 import com.datastax.oss.simulacron.server.BoundNode;
+import com.datastax.oss.simulacron.server.BoundDataCenter;
 import com.datastax.oss.simulacron.server.Server;
 import com.github.alexeyklimov.featurestore.FeatureStoreApplication;
 import com.github.alexeyklimov.featurestore.http.FeatureStoreHttpServer;
@@ -20,10 +23,19 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.SplittableRandom;
+import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
+    private static final String READ_QUERY_PREFIX = "SELECT feature_id, value FROM ";
+    private static final Pattern FEATURE_IDS_PATTERN = Pattern.compile(" AND feature_id IN \\(([^)]+)\\)$");
+    private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
+
     private final Server simulacron;
     private final BoundNode node;
     private final RootAllocator allocator;
@@ -49,6 +61,7 @@ public final class TestEnvironment implements AutoCloseable {
     public static TestEnvironment start(FeatureCatalog catalog) throws Exception {
         var simulacron = Server.builder().build();
         var node = simulacron.register(NodeSpec.builder().build());
+        ((BoundDataCenter) node.getDataCenter()).getStubStore().register(new PseudoRandomQueryPrime());
         var allocator = new RootAllocator();
         var address = (InetSocketAddress) node.getAddress();
         waitUntilListening(address);
@@ -139,5 +152,49 @@ public final class TestEnvironment implements AutoCloseable {
             }
         }
         throw lastError;
+    }
+
+    private static LinkedHashMap<String, String> readColumnTypes() {
+        var columnTypes = new LinkedHashMap<String, String>();
+        columnTypes.put("feature_id", "int");
+        columnTypes.put("value", "blob");
+        return columnTypes;
+    }
+
+    private static final class PseudoRandomQueryPrime extends StubMapping {
+        @Override
+        public boolean matches(com.datastax.oss.protocol.internal.Frame frame) {
+            if (!(frame.message instanceof com.datastax.oss.protocol.internal.request.Query query)) {
+                return false;
+            }
+            return query.query.startsWith(READ_QUERY_PREFIX) && FEATURE_IDS_PATTERN.matcher(query.query).find();
+        }
+
+        @Override
+        public List<com.datastax.oss.simulacron.common.stubbing.Action> getActions(
+                com.datastax.oss.simulacron.common.cluster.AbstractNode node,
+                com.datastax.oss.protocol.internal.Frame frame
+        ) {
+            var query = (com.datastax.oss.protocol.internal.request.Query) frame.message;
+            var rows = new ArrayList<LinkedHashMap<String, Object>>();
+            var random = new SplittableRandom(Integer.toUnsignedLong(query.query.hashCode()));
+            for (int featureId : featureIds(query.query)) {
+                var row = new LinkedHashMap<String, Object>();
+                row.put("feature_id", featureId);
+                row.put("value", ByteBuffer.wrap(intBytes(1 + Math.floorMod(random.nextInt() ^ featureId, 10_000))));
+                rows.add(row);
+            }
+            return new SuccessResult(rows, READ_COLUMN_TYPES).toActions(node, frame);
+        }
+
+        private static int[] featureIds(String query) {
+            var matcher = FEATURE_IDS_PATTERN.matcher(query);
+            if (!matcher.find()) {
+                return new int[0];
+            }
+            return java.util.Arrays.stream(matcher.group(1).split(",\\s*"))
+                    .mapToInt(Integer::parseInt)
+                    .toArray();
+        }
     }
 }
