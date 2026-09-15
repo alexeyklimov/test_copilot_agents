@@ -27,6 +27,11 @@ class LegacyReadApiLoadTest {
                 assertThat(response.statusCode()).isEqualTo(200);
                 assertThat(countOccurrences(response.body(), "\"key\":\"user_id\"")).isEqualTo(100);
                 assertThat(countOccurrences(response.body(), "\"feature600\":")).isEqualTo(100);
+                assertThat(response.body()).contains("\"key_value\":\"user-100\",\"features\":{\"feature1\":"
+                        + TestEnvironment.pseudoRandomValue("user-100", 1001)
+                        + ",");
+                assertThat(response.body()).contains("\"feature600\":"
+                        + TestEnvironment.pseudoRandomValue("user-100", 1600));
             }
         }
     }

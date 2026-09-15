@@ -32,9 +32,9 @@ import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class TestEnvironment implements AutoCloseable {
-    private static final String READ_QUERY_PREFIX = "SELECT feature_id, value FROM ";
+    private static final Pattern READ_QUERY_PATTERN = Pattern.compile(
+            "^SELECT feature_id, value FROM [a-z_]+ WHERE key_id = \\d+ AND entity = 0x[0-9a-f]+ AND feature_id IN \\((\\d+(?:, \\d+)*)\\);?$");
     private static final Pattern ENTITY_PATTERN = Pattern.compile(" AND entity = (0x[0-9a-f]+)");
-    private static final Pattern FEATURE_IDS_PATTERN = Pattern.compile(" AND feature_id IN \\(([^)]+)\\);?$");
     private static final LinkedHashMap<String, String> READ_COLUMN_TYPES = readColumnTypes();
 
     private final Server simulacron;
@@ -128,6 +128,10 @@ public final class TestEnvironment implements AutoCloseable {
         return ByteBuffer.allocate(Integer.BYTES).order(ByteOrder.BIG_ENDIAN).putInt(value).array();
     }
 
+    public static int pseudoRandomValue(String entity, int featureId) {
+        return PseudoRandomQueryPrime.pseudoRandomValue(blobLiteral(entity.getBytes(StandardCharsets.UTF_8)), featureId);
+    }
+
     private void prime(Prime prime) {
         node.prime(prime);
     }
@@ -168,7 +172,7 @@ public final class TestEnvironment implements AutoCloseable {
             if (!(frame.message instanceof com.datastax.oss.protocol.internal.request.Query query)) {
                 return false;
             }
-            return query.query.startsWith(READ_QUERY_PREFIX) && FEATURE_IDS_PATTERN.matcher(query.query).find();
+            return READ_QUERY_PATTERN.matcher(query.query).matches();
         }
 
         @Override
@@ -182,7 +186,7 @@ public final class TestEnvironment implements AutoCloseable {
             for (int featureId : featureIds(query.query)) {
                 var row = new LinkedHashMap<String, Object>();
                 row.put("feature_id", featureId);
-                row.put("value", ByteBuffer.wrap(intBytes(1 + Math.floorMod(Objects.hash(entityLiteral, featureId), 10_000))));
+                row.put("value", ByteBuffer.wrap(intBytes(pseudoRandomValue(entityLiteral, featureId))));
                 rows.add(row);
             }
             return new SuccessResult(rows, READ_COLUMN_TYPES).toActions(node, frame);
@@ -194,13 +198,17 @@ public final class TestEnvironment implements AutoCloseable {
         }
 
         private static int[] featureIds(String query) {
-            var matcher = FEATURE_IDS_PATTERN.matcher(query);
+            var matcher = READ_QUERY_PATTERN.matcher(query);
             if (!matcher.find()) {
                 return new int[0];
             }
             return java.util.Arrays.stream(matcher.group(1).split(",\\s*"))
                     .mapToInt(Integer::parseInt)
                     .toArray();
+        }
+
+        private static int pseudoRandomValue(String entityLiteral, int featureId) {
+            return 1 + Math.floorMod(Objects.hash(entityLiteral, featureId), 10_000);
         }
     }
 }
