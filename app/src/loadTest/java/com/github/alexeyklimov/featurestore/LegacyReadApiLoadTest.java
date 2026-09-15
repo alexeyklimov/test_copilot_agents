@@ -104,6 +104,7 @@ class LegacyReadApiLoadTest {
                         default -> parser.skipChildren();
                     }
                 }
+                require(!entities.containsKey(keyValue), "Duplicate entity in response: " + keyValue);
                 entities.put(keyValue, features);
             }
         }
