@@ -45,7 +45,7 @@ Each key type maps to a Cassandra slice table and a numeric `key_id`. Features a
 
 ### Arrow boundary
 
-Arrow is used as the in-memory boundary between request parsing, authorization, Cassandra reading, and response serialization:
+Arrow is used as the in-memory request and result representation across parsing, authorization checks, Cassandra reads, and response serialization:
 
 - request tables store request ordinal + entity bytes
 - result tables store request ordinal + entity + feature ID + raw value bytes
