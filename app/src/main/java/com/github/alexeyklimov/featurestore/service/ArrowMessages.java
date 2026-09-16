@@ -261,7 +261,11 @@ public final class ArrowMessages {
         }
 
         private static long rowSizeBytes(byte[] entity, byte[] value) {
-            return Long.BYTES + Integer.BYTES + entity.length + value.length;
+            return Long.BYTES
+                    + Integer.BYTES
+                    + (2L * Integer.BYTES)
+                    + entity.length
+                    + value.length;
         }
 
         /** Освобождает ресурсы стримера результатов. */
