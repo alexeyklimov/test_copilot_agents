@@ -109,6 +109,44 @@ class TenantAccessControllerTest {
         }
     }
 
+    @Test
+    void closesAuthorizedRequestOnlyOnce() {
+        var catalog = new FeatureCatalog(
+                List.of(USER_ID),
+                List.of(new FeatureCatalog.TenantPolicy(
+                        "tenant-a",
+                        Set.of("user_id"),
+                        new FeatureCatalog.RequestQuota(100, 100, 100))));
+        var controller = new TenantAccessController(catalog);
+
+        var firstRequest = requestOf(60);
+        var secondRequest = requestOf(40);
+        var thirdRequest = requestOf(70);
+        TenantAccessController.AuthorizedTenantRequest firstAuthorized = null;
+        TenantAccessController.AuthorizedTenantRequest secondAuthorized = null;
+        try {
+            firstAuthorized = controller.authorize("tenant-a", firstRequest);
+            secondAuthorized = controller.authorize("tenant-a", secondRequest);
+
+            firstAuthorized.close();
+            firstAuthorized.close();
+            firstAuthorized = null;
+
+            assertThatThrownBy(() -> controller.authorize("tenant-a", thirdRequest))
+                    .isInstanceOf(ReadRequestException.class)
+                    .hasMessageContaining("Tenant quota exceeded");
+
+            secondAuthorized.close();
+            secondAuthorized = null;
+        } finally {
+            closeQuietly(firstAuthorized);
+            closeQuietly(secondAuthorized);
+            closeQuietly(firstRequest);
+            closeQuietly(secondRequest);
+            closeQuietly(thirdRequest);
+        }
+    }
+
     private static ArrowMessages.ArrowTenantRequest requestOf(long arrowBytes) {
         var allocator = new RootAllocator();
         var root = ArrowMessages.newRequestRoot(allocator);
