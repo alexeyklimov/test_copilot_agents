@@ -1,10 +1,13 @@
 package com.github.alexeyklimov.featurestore.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.github.alexeyklimov.featurestore.model.FeatureCatalog;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Executors;
 import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 
@@ -147,6 +150,54 @@ class TenantAccessControllerTest {
         }
     }
 
+    @Test
+    void serializesConcurrentInflightQuotaUpdatesPerTenant() throws Exception {
+        var catalog = new FeatureCatalog(
+                List.of(USER_ID),
+                List.of(new FeatureCatalog.TenantPolicy(
+                        "tenant-a",
+                        Set.of("user_id"),
+                        new FeatureCatalog.RequestQuota(100, 100, 100))));
+        var controller = new TenantAccessController(catalog);
+
+        var requests = List.of(requestOf(60), requestOf(60), requestOf(60));
+        var barrier = new CyclicBarrier(requests.size());
+        var attempts = new java.util.ArrayList<AuthorizationAttempt>();
+
+        try {
+            try (var executor = Executors.newVirtualThreadPerTaskExecutor()) {
+                var futures = requests.stream()
+                        .<java.util.concurrent.Future<AuthorizationAttempt>>map(request -> executor.submit(() -> {
+                            barrier.await();
+                            try {
+                                return new AuthorizationAttempt(controller.authorize("tenant-a", request));
+                            } catch (ReadRequestException exception) {
+                                return new AuthorizationAttempt(null);
+                            }
+                        }))
+                        .toList();
+
+                for (var future : futures) {
+                    attempts.add(future.get());
+                }
+            }
+
+            var successCount = attempts.stream()
+                    .filter(attempt -> attempt.authorizedRequest() != null)
+                    .count();
+            assertThat(successCount).isEqualTo(1);
+        } finally {
+            for (var attempt : attempts) {
+                if (attempt.authorizedRequest() != null) {
+                    closeQuietly(attempt.authorizedRequest());
+                }
+            }
+            for (var request : requests) {
+                closeQuietly(request);
+            }
+        }
+    }
+
     private static ArrowMessages.ArrowTenantRequest requestOf(long arrowBytes) {
         var allocator = new RootAllocator();
         var root = ArrowMessages.newRequestRoot(allocator);
@@ -168,5 +219,10 @@ class TenantAccessControllerTest {
         } catch (Exception ignored) {
             // no-op for test cleanup
         }
+    }
+
+    private record AuthorizationAttempt(
+            TenantAccessController.AuthorizedTenantRequest authorizedRequest
+    ) {
     }
 }

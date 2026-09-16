@@ -2,13 +2,11 @@ package com.github.alexeyklimov.featurestore.service;
 
 import com.github.alexeyklimov.featurestore.model.FeatureCatalog;
 import com.github.alexeyklimov.featurestore.service.ArrowMessages.ArrowTenantRequest;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 public final class TenantAccessController {
     private final FeatureCatalog catalog;
-    private final ConcurrentHashMap<String, AtomicLong> inflightBytesByTenant = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, TenantInflightBytes> inflightBytesByTenant = new ConcurrentHashMap<>();
 
     /** Создает контроллер доступа по каталогу. */
     public TenantAccessController(FeatureCatalog catalog) {
@@ -55,35 +53,20 @@ public final class TenantAccessController {
     }
 
     private boolean reserveInflightBytes(String tenantId, long bytes, long quotaLimit) {
-        var inflightBytes = inflightBytesByTenant.computeIfAbsent(tenantId, ignored -> new AtomicLong());
-        while (true) {
-            var current = inflightBytes.get();
-            if (bytes > quotaLimit - current) {
-                return false;
-            }
-            var updated = current + bytes;
-            if (inflightBytes.compareAndSet(current, updated)) {
-                return true;
-            }
-        }
+        var attempt = new ReservationAttempt();
+        inflightBytesByTenant.compute(tenantId, (ignored, inflightBytes) -> {
+            var currentInflightBytes = inflightBytes == null ? new TenantInflightBytes() : inflightBytes;
+            attempt.granted = currentInflightBytes.tryReserve(bytes, quotaLimit);
+            return currentInflightBytes.isEmpty() ? null : currentInflightBytes;
+        });
+        return attempt.granted;
     }
 
     private void releaseInflightBytes(String tenantId, long bytes) {
-        var inflightBytes = inflightBytesByTenant.get(tenantId);
-        if (inflightBytes == null) {
-            return;
-        }
-        while (true) {
-            var current = inflightBytes.get();
-            var updated = Math.max(0, current - bytes);
-            if (!inflightBytes.compareAndSet(current, updated)) {
-                continue;
-            }
-            if (updated == 0) {
-                inflightBytesByTenant.remove(tenantId, inflightBytes);
-            }
-            return;
-        }
+        inflightBytesByTenant.computeIfPresent(tenantId, (ignored, inflightBytes) -> {
+            inflightBytes.release(bytes);
+            return inflightBytes.isEmpty() ? null : inflightBytes;
+        });
     }
 
     public static final class AuthorizedTenantRequest implements AutoCloseable {
@@ -91,7 +74,7 @@ public final class TenantAccessController {
         private final String tenantId;
         private final ArrowTenantRequest request;
         private final long maxInflightBytes;
-        private final AtomicBoolean closed = new AtomicBoolean();
+        private final CloseGuard closeGuard = new CloseGuard();
 
         private AuthorizedTenantRequest(
                 TenantAccessController controller,
@@ -111,7 +94,7 @@ public final class TenantAccessController {
 
         @Override
         public void close() {
-            if (!closed.compareAndSet(false, true)) {
+            if (!closeGuard.tryClose()) {
                 return;
             }
             try {
@@ -119,6 +102,42 @@ public final class TenantAccessController {
             } finally {
                 controller.releaseInflightBytes(tenantId, request.arrowBytes());
             }
+        }
+    }
+
+    private static final class ReservationAttempt {
+        private boolean granted;
+    }
+
+    private static final class TenantInflightBytes {
+        private long currentBytes;
+
+        private synchronized boolean tryReserve(long bytes, long quotaLimit) {
+            if (bytes > quotaLimit - currentBytes) {
+                return false;
+            }
+            currentBytes += bytes;
+            return true;
+        }
+
+        private synchronized void release(long bytes) {
+            currentBytes = Math.max(0, currentBytes - bytes);
+        }
+
+        private synchronized boolean isEmpty() {
+            return currentBytes == 0;
+        }
+    }
+
+    private static final class CloseGuard {
+        private boolean closed;
+
+        private synchronized boolean tryClose() {
+            if (closed) {
+                return false;
+            }
+            closed = true;
+            return true;
         }
     }
 }
