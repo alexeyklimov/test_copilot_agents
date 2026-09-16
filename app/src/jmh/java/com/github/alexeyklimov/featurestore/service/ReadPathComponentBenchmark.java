@@ -42,10 +42,13 @@ public class ReadPathComponentBenchmark {
     public int authorizeTenantRequest(AuthorizeState state) {
         var authorized = state.accessController.authorize(PerformanceFixtures.TENANT_ID, state.request);
         try {
-            state.request = null;
             return authorized.request().sliceRequests().size();
         } finally {
-            authorized.close();
+            try {
+                authorized.close();
+            } finally {
+                state.request = null;
+            }
         }
     }
 
