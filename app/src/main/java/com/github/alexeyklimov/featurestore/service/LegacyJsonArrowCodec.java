@@ -140,8 +140,7 @@ public final class LegacyJsonArrowCodec {
         private final JsonGenerator generator;
         private String currentKeyName;
         private String currentEntity;
-        private SliceReadRequest currentRequest;
-        private Map<String, Object> currentFeatures;
+        private long currentOrdinal = Long.MIN_VALUE;
         private boolean started;
 
         /** Инициализирует writer и открывает JSON-массив. */
@@ -151,55 +150,51 @@ public final class LegacyJsonArrowCodec {
             started = true;
         }
 
-        /** Принимает Arrow-батч и накапливает JSON-ответ. */
+        /** Принимает Arrow-батч и сразу пишет JSON-ответ в поток. */
         public void consume(SliceReadRequest request, VectorSchemaRoot batch) throws IOException {
             var ordinals = (org.apache.arrow.vector.BigIntVector) batch.getVector("request_ordinal");
             var entities = (VarBinaryVector) batch.getVector("entity");
             var featureIds = (IntVector) batch.getVector("feature_id");
             var values = (VarBinaryVector) batch.getVector("value");
             for (int row = 0; row < batch.getRowCount(); row++) {
+                var ordinal = ordinals.get(row);
                 var entity = new String(entities.get(row), StandardCharsets.UTF_8);
                 var keyName = request.keyType().name();
-                if (currentFeatures == null || !keyName.equals(currentKeyName) || !entity.equals(currentEntity)) {
+                if (ordinal != currentOrdinal || !keyName.equals(currentKeyName) || !entity.equals(currentEntity)) {
                     flushCurrent();
                     currentKeyName = keyName;
                     currentEntity = entity;
-                    currentRequest = request;
-                    currentFeatures = new LinkedHashMap<>();
+                    currentOrdinal = ordinal;
+                    generator.writeStartObject();
+                    generator.writeStringField("key", currentKeyName);
+                    generator.writeStringField("key_value", currentEntity);
+                    generator.writeObjectFieldStart("features");
                 }
                 var feature = request.keyType().featureById(featureIds.get(row));
-                currentFeatures.put(feature.name(), decode(feature.valueEncoding(), values.get(row)));
+                writeDecodedField(feature.name(), feature.valueEncoding(), values.get(row));
             }
         }
 
-        /** Декодирует бинарное значение фичи. */
-        private Object decode(FeatureCatalog.ValueEncoding valueEncoding, byte[] bytes) {
-            return switch (valueEncoding) {
-                case INT32 -> ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getInt();
-                case UTF8 -> new String(bytes, StandardCharsets.UTF_8);
-            };
+        /** Декодирует бинарное значение фичи и сразу пишет его в JSON. */
+        private void writeDecodedField(String fieldName, FeatureCatalog.ValueEncoding valueEncoding, byte[] bytes) throws IOException {
+            switch (valueEncoding) {
+                case INT32 -> generator.writeNumberField(
+                        fieldName,
+                        ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getInt());
+                case UTF8 -> generator.writeStringField(fieldName, new String(bytes, StandardCharsets.UTF_8));
+            }
         }
 
-        /** Сбрасывает накопленный объект в JSON-поток. */
+        /** Завершает текущий объект в JSON-потоке. */
         private void flushCurrent() throws IOException {
-            if (currentFeatures == null || currentFeatures.isEmpty()) {
+            if (currentEntity == null) {
                 return;
             }
-            generator.writeStartObject();
-            generator.writeStringField("key", currentKeyName);
-            generator.writeStringField("key_value", currentEntity);
-            generator.writeObjectFieldStart("features");
-            for (var featureId : currentRequest.featureIds()) {
-                var feature = currentRequest.keyType().featureById(featureId);
-                var value = currentFeatures.get(feature.name());
-                if (value != null) {
-                    generator.writeObjectField(feature.name(), value);
-                }
-            }
             generator.writeEndObject();
             generator.writeEndObject();
-            currentFeatures = null;
-            currentRequest = null;
+            currentKeyName = null;
+            currentEntity = null;
+            currentOrdinal = Long.MIN_VALUE;
             generator.flush();
         }
 
