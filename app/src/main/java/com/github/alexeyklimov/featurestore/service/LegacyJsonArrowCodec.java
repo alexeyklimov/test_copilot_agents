@@ -97,10 +97,12 @@ public final class LegacyJsonArrowCodec {
         for (var featureName : requestedFeatures) {
             var feature = catalog.findFeature(featureName)
                     .orElseThrow(() -> new ReadRequestException(400, "Unknown feature: " + featureName));
-            var keyType = catalog.keyTypes().stream()
+            var keyType = builders.keySet().stream()
                     .filter(candidate -> candidate.featuresByName().containsKey(featureName))
                     .findFirst()
-                    .orElseThrow(() -> new ReadRequestException(400, "Feature is not bound to a key type: " + featureName));
+                    .orElseThrow(() -> new ReadRequestException(
+                            400,
+                            "Feature is not bound to a key type present in the request: " + featureName));
             featureIdsByKeyType.computeIfAbsent(keyType, ignored -> new ArrayList<>()).add(feature.id());
         }
 
