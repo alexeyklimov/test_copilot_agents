@@ -260,9 +260,14 @@ public final class ArrowMessages {
     static long totalArrowBytes(List<SliceReadRequest> requests) {
         var size = 0L;
         for (var request : requests) {
-            size += request.root().getFieldVectors().stream().mapToLong(vector -> vector.getBufferSize()).sum();
+            size += vectorRootBytes(request.root());
             size += (long) request.featureIds().length * Integer.BYTES;
         }
         return size;
+    }
+
+    /** Считает общий размер буферов в Arrow-таблице. */
+    public static long vectorRootBytes(VectorSchemaRoot root) {
+        return root.getFieldVectors().stream().mapToLong(vector -> vector.getBufferSize()).sum();
     }
 }
