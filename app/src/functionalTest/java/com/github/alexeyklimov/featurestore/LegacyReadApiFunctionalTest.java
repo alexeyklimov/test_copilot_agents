@@ -7,7 +7,7 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.github.alexeyklimov.featurestore.model.FeatureCatalogDefaults;
 import com.github.alexeyklimov.featurestore.testsupport.TestEnvironment;
 import java.io.IOException;
-import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -39,13 +39,12 @@ class LegacyReadApiFunctionalTest {
                       "features": ["feature1", "feature2", "feature3", "feature4"]
                     }
                     """);
-
             assertThat(response.statusCode()).isEqualTo(200);
-            var expected = new LinkedHashMap<String, Map<String, Integer>>();
-            expected.put("userA", Map.of("feature1", 1, "feature2", 2, "feature3", 3));
-            expected.put("userB", Map.of("feature1", 4, "feature2", 5, "feature3", 6));
-            expected.put("carA", Map.of("feature4", 10));
-            assertThat(responseEntities(response.body())).containsExactlyEntriesOf(expected);
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(responseEntries(response.body())).containsExactly(
+                    new ResponseEntry("user_id", "userA", Map.of("feature1", 1, "feature2", 2, "feature3", 3)),
+                    new ResponseEntry("user_id", "userB", Map.of("feature1", 4, "feature2", 5, "feature3", 6)),
+                    new ResponseEntry("car_id", "carA", Map.of("feature4", 10)));
         }
     }
 
@@ -90,24 +89,26 @@ class LegacyReadApiFunctionalTest {
         }
     }
 
-    private static Map<String, Map<String, Integer>> responseEntities(String body) throws IOException {
-        var entities = new LinkedHashMap<String, Map<String, Integer>>();
+    private static List<ResponseEntry> responseEntries(String body) throws IOException {
+        var entities = new java.util.ArrayList<ResponseEntry>();
         try (var parser = JSON_FACTORY.createParser(body)) {
             require(parser.nextToken() == JsonToken.START_ARRAY, "Response must start with a JSON array");
             while (parser.nextToken() != JsonToken.END_ARRAY) {
                 require(parser.currentToken() == JsonToken.START_OBJECT, "Each response entry must be a JSON object");
+                var key = "";
                 var keyValue = "";
                 Map<String, Integer> features = Map.of();
                 while (parser.nextToken() != JsonToken.END_OBJECT) {
                     var fieldName = parser.currentName();
                     parser.nextToken();
                     switch (fieldName) {
+                        case "key" -> key = parser.getValueAsString();
                         case "key_value" -> keyValue = parser.getValueAsString();
                         case "features" -> features = readFeatures(parser);
                         default -> parser.skipChildren();
                     }
                 }
-                entities.put(keyValue, features);
+                entities.add(new ResponseEntry(key, keyValue, features));
             }
         }
         return entities;
@@ -128,5 +129,8 @@ class LegacyReadApiFunctionalTest {
         if (!condition) {
             throw new IOException(message);
         }
+    }
+
+    private record ResponseEntry(String key, String keyValue, Map<String, Integer> features) {
     }
 }
