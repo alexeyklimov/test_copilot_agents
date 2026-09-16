@@ -4,6 +4,7 @@ import com.github.alexeyklimov.featurestore.cassandra.CassandraSliceReadPipe;
 import java.io.InputStream;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
 
 public final class LegacyReadService {
     private final RootAllocator allocator;
@@ -62,16 +63,22 @@ public final class LegacyReadService {
                     sliceReadStreamer.stream(
                             sliceRequest,
                             allocator,
-                            (currentRequest, batch) -> {
-                                var batchBytes = ArrowMessages.vectorRootBytes(batch);
-                                accessController.reserveResponseInflightBytes(authorizedRequest, batchBytes);
-                                try {
-                                    writer.consume(currentRequest, batch);
-                                } finally {
-                                    accessController.releaseResponseInflightBytes(authorizedRequest, batchBytes);
-                                }
-                            });
+                            (currentRequest, batch) -> consumeBatch(writer, currentRequest, batch));
                 }
+            }
+        }
+
+        private void consumeBatch(
+                LegacyJsonArrowCodec.JsonArrowResponseWriter writer,
+                ArrowMessages.SliceReadRequest currentRequest,
+                VectorSchemaRoot batch
+        ) throws Exception {
+            var batchBytes = ArrowMessages.vectorRootBytes(batch);
+            accessController.reserveResponseInflightBytes(authorizedRequest, batchBytes);
+            try {
+                writer.consume(currentRequest, batch);
+            } finally {
+                accessController.releaseResponseInflightBytes(authorizedRequest, batchBytes);
             }
         }
 

@@ -6,8 +6,10 @@ import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 
@@ -60,21 +62,7 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
 
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             try (var requestBody = exchange.getRequestBody()) {
-                var preparedRead = readService.prepare(tenantId, requestBody);
-                try (preparedRead) {
-                    var responseFile = Files.createTempFile("legacy-read-", ".json");
-                    try {
-                        try (var responseStream = Files.newOutputStream(responseFile)) {
-                            preparedRead.stream(responseStream);
-                        }
-                        exchange.sendResponseHeaders(200, Files.size(responseFile));
-                        try (var responseStream = Files.newInputStream(responseFile)) {
-                            responseStream.transferTo(exchange.getResponseBody());
-                        }
-                    } finally {
-                        Files.deleteIfExists(responseFile);
-                    }
-                }
+                processRead(exchange, tenantId, requestBody);
             } catch (ReadRequestException exception) {
                 if (!exchange.getResponseHeaders().containsKey("X-Error")) {
                     writeError(exchange, exception.statusCode(), exception.getMessage());
@@ -83,6 +71,27 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
                 writeError(exchange, 500, "Internal server error");
             } finally {
                 exchange.close();
+            }
+        }
+
+        private void processRead(HttpExchange exchange, String tenantId, InputStream requestBody) throws Exception {
+            try (var preparedRead = readService.prepare(tenantId, requestBody);
+                 var responseFile = TempResponseFile.create()) {
+                writePreparedResponse(preparedRead, responseFile.path());
+                sendPreparedResponse(exchange, responseFile.path());
+            }
+        }
+
+        private static void writePreparedResponse(LegacyReadService.PreparedRead preparedRead, Path responseFile) throws Exception {
+            try (var responseStream = Files.newOutputStream(responseFile)) {
+                preparedRead.stream(responseStream);
+            }
+        }
+
+        private static void sendPreparedResponse(HttpExchange exchange, Path responseFile) throws IOException {
+            exchange.sendResponseHeaders(200, Files.size(responseFile));
+            try (var responseStream = Files.newInputStream(responseFile)) {
+                responseStream.transferTo(exchange.getResponseBody());
             }
         }
 
@@ -95,6 +104,17 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
             exchange.sendResponseHeaders(statusCode, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
+        }
+
+        private record TempResponseFile(Path path) implements AutoCloseable {
+            private static TempResponseFile create() throws IOException {
+                return new TempResponseFile(Files.createTempFile("legacy-read-", ".json"));
+            }
+
+            @Override
+            public void close() throws IOException {
+                Files.deleteIfExists(path);
+            }
         }
     }
 }
