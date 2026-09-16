@@ -16,12 +16,10 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -29,15 +27,11 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 
 public final class LegacyJsonArrowCodec {
     private final JsonFactory jsonFactory = new JsonFactory();
-    private final FeatureCatalog catalog;
-    private final Map<String, BoundFeature> featureBindingsByName;
-    private final Set<String> ambiguousFeatures;
+    private final Map<String, List<BoundFeature>> featureBindingsByName;
 
     /** Создает кодек для заданного каталога фичей. */
     public LegacyJsonArrowCodec(FeatureCatalog catalog) {
-        this.catalog = catalog;
         this.featureBindingsByName = buildFeatureBindingsByName(catalog);
-        this.ambiguousFeatures = findAmbiguousFeatures(catalog);
     }
 
     /** Разбирает legacy JSON в Arrow-запрос арендатора. */
@@ -48,7 +42,7 @@ public final class LegacyJsonArrowCodec {
         try (var parser = jsonFactory.createParser(inputStream)) {
             var keyCount = parseRequest(parser, requestAllocator, builders, requestedFeatures);
             validateParsedRequest(keyCount, requestedFeatures);
-            var featureIdsByKeyType = resolveFeatureIdsByKeyType(requestedFeatures);
+            var featureIdsByKeyType = resolveFeatureIdsByKeyType(requestedFeatures, builders.keySet());
             var requests = buildRequests(builders, featureIdsByKeyType);
             var totalBytes = totalArrowBytes(requests);
             return new ArrowTenantRequest(requestAllocator, requests, keyCount, keyCount * requestedFeatures.size(), totalBytes);
@@ -157,48 +151,41 @@ public final class LegacyJsonArrowCodec {
         }
     }
 
-    private Map<FeatureCatalog.KeyType, List<Integer>> resolveFeatureIdsByKeyType(LinkedHashSet<String> requestedFeatures) {
+    private Map<FeatureCatalog.KeyType, List<Integer>> resolveFeatureIdsByKeyType(
+            LinkedHashSet<String> requestedFeatures,
+            java.util.Set<FeatureCatalog.KeyType> requestKeyTypes
+    ) {
         var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
         for (var featureName : requestedFeatures) {
-            var boundFeature = findBoundFeature(featureName);
-            featureIdsByKeyType.computeIfAbsent(boundFeature.keyType(), ignored -> new ArrayList<>())
-                    .add(boundFeature.feature().id());
+            var bindings = findBoundFeatures(featureName);
+            for (var binding : bindings) {
+                if (!requestKeyTypes.contains(binding.keyType())) {
+                    continue;
+                }
+                featureIdsByKeyType.computeIfAbsent(binding.keyType(), ignored -> new ArrayList<>())
+                        .add(binding.feature().id());
+            }
         }
         return featureIdsByKeyType;
     }
 
-    private BoundFeature findBoundFeature(String featureName) {
-        if (ambiguousFeatures.contains(featureName)) {
-            throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
-        }
-        var boundFeature = featureBindingsByName.get(featureName);
-        if (boundFeature == null) {
+    private List<BoundFeature> findBoundFeatures(String featureName) {
+        var boundFeatures = featureBindingsByName.get(featureName);
+        if (boundFeatures == null) {
             throw new ReadRequestException(400, "Unknown feature: " + featureName);
         }
-        return boundFeature;
+        return boundFeatures;
     }
 
-    private static Map<String, BoundFeature> buildFeatureBindingsByName(FeatureCatalog catalog) {
-        var bindings = new LinkedHashMap<String, BoundFeature>();
+    private static Map<String, List<BoundFeature>> buildFeatureBindingsByName(FeatureCatalog catalog) {
+        var bindings = new LinkedHashMap<String, List<BoundFeature>>();
         for (var keyType : catalog.keyTypes()) {
             for (var feature : keyType.featuresByName().values()) {
-                bindings.putIfAbsent(feature.name(), new BoundFeature(keyType, feature));
+                bindings.computeIfAbsent(feature.name(), ignored -> new ArrayList<>())
+                        .add(new BoundFeature(keyType, feature));
             }
         }
         return Map.copyOf(bindings);
-    }
-
-    private static Set<String> findAmbiguousFeatures(FeatureCatalog catalog) {
-        var featureNames = new HashSet<String>();
-        var ambiguousFeatures = new HashSet<String>();
-        for (var keyType : catalog.keyTypes()) {
-            for (var featureName : keyType.featuresByName().keySet()) {
-                if (!featureNames.add(featureName)) {
-                    ambiguousFeatures.add(featureName);
-                }
-            }
-        }
-        return Set.copyOf(ambiguousFeatures);
     }
 
     private static List<SliceReadRequest> buildRequests(
