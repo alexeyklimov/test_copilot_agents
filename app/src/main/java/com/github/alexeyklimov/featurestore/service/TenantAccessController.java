@@ -2,6 +2,7 @@ package com.github.alexeyklimov.featurestore.service;
 
 import com.github.alexeyklimov.featurestore.model.FeatureCatalog;
 import com.github.alexeyklimov.featurestore.service.ArrowMessages.ArrowTenantRequest;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -90,7 +91,7 @@ public final class TenantAccessController {
         private final String tenantId;
         private final ArrowTenantRequest request;
         private final long maxInflightBytes;
-        private boolean closed;
+        private final AtomicBoolean closed = new AtomicBoolean();
 
         private AuthorizedTenantRequest(
                 TenantAccessController controller,
@@ -110,10 +111,9 @@ public final class TenantAccessController {
 
         @Override
         public void close() {
-            if (closed) {
+            if (!closed.compareAndSet(false, true)) {
                 return;
             }
-            closed = true;
             try {
                 request.close();
             } finally {
