@@ -7,6 +7,7 @@ import com.fasterxml.jackson.core.JsonToken;
 import com.github.alexeyklimov.featurestore.model.FeatureCatalogDefaults;
 import com.github.alexeyklimov.featurestore.testsupport.TestEnvironment;
 import java.io.IOException;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
