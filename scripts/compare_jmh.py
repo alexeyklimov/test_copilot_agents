@@ -44,7 +44,8 @@ def main():
     base_results = load_results(args.base)
     candidate_results = load_results(args.candidate)
 
-    missing = sorted(set(base_results) ^ set(candidate_results))
+    missing = sorted(set(base_results) - set(candidate_results))
+    candidate_only = sorted(set(candidate_results) - set(base_results))
     regressions = []
     rows = []
 
@@ -74,6 +75,7 @@ def main():
         f"- compared benchmarks: {len(rows)}",
         f"- regressions: {len(regressions)}",
         f"- missing entries: {len(missing)}",
+        f"- candidate-only entries: {len(candidate_only)}",
         "",
         "| Benchmark | Mode | Params | Base | Candidate | Regression | Unit |",
         "| --- | --- | --- | ---: | ---: | ---: | --- |",
@@ -89,6 +91,19 @@ def main():
                 *[
                     f"- `{benchmark}` / `{mode}` / {format_params(params)}"
                     for benchmark, mode, params in missing
+                ],
+            ]
+        )
+
+    if candidate_only:
+        lines.extend(
+            [
+                "",
+                "## Candidate-only benchmark entries",
+                "",
+                *[
+                    f"- `{benchmark}` / `{mode}` / {format_params(params)}"
+                    for benchmark, mode, params in candidate_only
                 ],
             ]
         )
