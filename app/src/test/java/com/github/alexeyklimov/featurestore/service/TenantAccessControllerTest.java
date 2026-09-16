@@ -61,11 +61,12 @@ class TenantAccessControllerTest {
         TenantAccessController.AuthorizedTenantRequest authorized = null;
         try {
             authorized = controller.authorize("tenant-a", request);
-            assertThatThrownBy(() -> controller.reserveResponseInflightBytes(authorized, 31))
+            var requestHandle = authorized;
+            assertThatThrownBy(() -> controller.reserveResponseInflightBytes(requestHandle, 31))
                     .isInstanceOf(ReadRequestException.class)
                     .hasMessageContaining("Tenant quota exceeded");
-            controller.reserveResponseInflightBytes(authorized, 30);
-            controller.releaseResponseInflightBytes(authorized, 30);
+            controller.reserveResponseInflightBytes(requestHandle, 30);
+            controller.releaseResponseInflightBytes(requestHandle, 30);
             authorized.close();
             authorized = null;
         } finally {
