@@ -5,9 +5,10 @@ import com.github.alexeyklimov.featurestore.service.ReadRequestException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 
@@ -62,11 +63,18 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
             try (var requestBody = exchange.getRequestBody()) {
                 var preparedRead = readService.prepare(tenantId, requestBody);
                 try (preparedRead) {
-                    var responseBuffer = new ByteArrayOutputStream();
-                    preparedRead.stream(responseBuffer);
-                    var payload = responseBuffer.toByteArray();
-                    exchange.sendResponseHeaders(200, payload.length);
-                    exchange.getResponseBody().write(payload);
+                    var responseFile = Path.of("/tmp").resolve("legacy-read-" + java.util.UUID.randomUUID() + ".json");
+                    try {
+                        try (var responseStream = Files.newOutputStream(responseFile)) {
+                            preparedRead.stream(responseStream);
+                        }
+                        exchange.sendResponseHeaders(200, Files.size(responseFile));
+                        try (var responseStream = Files.newInputStream(responseFile)) {
+                            responseStream.transferTo(exchange.getResponseBody());
+                        }
+                    } finally {
+                        Files.deleteIfExists(responseFile);
+                    }
                 }
             } catch (ReadRequestException exception) {
                 if (!exchange.getResponseHeaders().containsKey("X-Error")) {
