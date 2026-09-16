@@ -28,7 +28,7 @@ class CassandraSliceReadPipeTest {
     @Test
     void flushesWhenConfiguredPageSizeBytesWouldOverflow() throws Exception {
         try (var allocator = new RootAllocator();
-             var request = request(USER_ID, "userA", 101, 102)) {
+             var request = request(allocator, USER_ID, "userA", 101, 102)) {
             var pipe = new CassandraSliceReadPipe(
                     session(List.of(row(101, bytes(16)), row(102, bytes(16)))),
                     10,
@@ -44,7 +44,7 @@ class CassandraSliceReadPipeTest {
     @Test
     void rejectsRowsLargerThanConfiguredPageSizeBytes() throws Exception {
         try (var allocator = new RootAllocator();
-             var request = request(USER_ID, "userA", 101)) {
+             var request = request(allocator, USER_ID, "userA", 101)) {
             var pipe = new CassandraSliceReadPipe(session(List.of(row(101, bytes(16)))), 10, 32);
 
             assertThatThrownBy(() -> pipe.stream(request, allocator, (currentRequest, batch) -> {
@@ -54,9 +54,8 @@ class CassandraSliceReadPipeTest {
         }
     }
 
-    private static SliceReadRequest request(FeatureCatalog.KeyType keyType, String entity, int... featureIds) {
+    private static SliceReadRequest request(RootAllocator allocator, FeatureCatalog.KeyType keyType, String entity, int... featureIds) {
         var entityBytes = entity.getBytes(StandardCharsets.UTF_8);
-        var allocator = new RootAllocator();
         var ordinals = new BigIntVector("request_ordinal", allocator);
         var entities = new VarBinaryVector("entity", allocator);
         ordinals.allocateNew(1);
