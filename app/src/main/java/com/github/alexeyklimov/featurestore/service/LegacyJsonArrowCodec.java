@@ -85,12 +85,22 @@ public final class LegacyJsonArrowCodec {
 
             var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
             for (var featureName : requestedFeatures) {
-                var feature = catalog.findFeature(featureName)
-                        .orElseThrow(() -> new ReadRequestException(400, "Unknown feature: " + featureName));
-                var keyType = catalog.keyTypes().stream()
-                        .filter(candidate -> candidate.featuresByName().containsKey(featureName))
-                        .findFirst()
-                        .orElseThrow(() -> new ReadRequestException(400, "Feature is not bound to a key type: " + featureName));
+                FeatureCatalog.KeyType keyType = null;
+                FeatureCatalog.FeatureDefinition feature = null;
+                for (var candidate : catalog.keyTypes()) {
+                    var boundFeature = candidate.featuresByName().get(featureName);
+                    if (boundFeature == null) {
+                        continue;
+                    }
+                    if (feature != null) {
+                        throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
+                    }
+                    keyType = candidate;
+                    feature = boundFeature;
+                }
+                if (feature == null || keyType == null) {
+                    throw new ReadRequestException(400, "Unknown feature: " + featureName);
+                }
                 featureIdsByKeyType.computeIfAbsent(keyType, ignored -> new ArrayList<>()).add(feature.id());
             }
 

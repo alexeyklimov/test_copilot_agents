@@ -127,6 +127,27 @@ class LegacyJsonArrowCodecTest {
     }
 
     @Test
+    void rejectsAmbiguousFeatureNamesAcrossKeyTypes() {
+        var duplicateCatalog = new FeatureCatalog(List.of(
+                FeatureCatalog.KeyType.of(
+                        "user_id",
+                        1,
+                        "user_features",
+                        new FeatureCatalog.FeatureDefinition("shared_feature", 101, FeatureCatalog.ValueEncoding.INT32)),
+                FeatureCatalog.KeyType.of(
+                        "car_id",
+                        2,
+                        "car_features",
+                        new FeatureCatalog.FeatureDefinition("shared_feature", 201, FeatureCatalog.ValueEncoding.INT32))),
+                List.of());
+
+        assertRejected(
+                new LegacyJsonArrowCodec(duplicateCatalog),
+                "{\"keys\":[{\"user_id\":\"userA\"}],\"features\":[\"shared_feature\"]}",
+                "Feature is bound to multiple key types: shared_feature");
+    }
+
+    @Test
     void streamsResponseRowsAcrossBatchBoundaries() throws Exception {
         var codec = new LegacyJsonArrowCodec(CATALOG);
 
@@ -228,9 +249,12 @@ class LegacyJsonArrowCodecTest {
     }
 
     private static void assertRejected(String json, String message) {
+        assertRejected(new LegacyJsonArrowCodec(CATALOG), json, message);
+    }
+
+    private static void assertRejected(LegacyJsonArrowCodec codec, String json, String message) {
         var allocator = new RootAllocator();
         try {
-            var codec = new LegacyJsonArrowCodec(CATALOG);
             ArrowMessages.ArrowTenantRequest request = null;
             Throwable thrown = null;
 
