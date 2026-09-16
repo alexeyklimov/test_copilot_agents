@@ -2,12 +2,13 @@ package com.github.alexeyklimov.featurestore.cassandra;
 
 import com.datastax.oss.driver.api.core.CqlSession;
 import com.datastax.oss.driver.api.core.cql.SimpleStatement;
+import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
+import com.datastax.oss.driver.api.querybuilder.term.Term;
 import com.github.alexeyklimov.featurestore.service.ArrowMessages.ResultBatchConsumer;
 import com.github.alexeyklimov.featurestore.service.ArrowMessages.ResultTableStreamer;
 import com.github.alexeyklimov.featurestore.service.ArrowMessages.SliceReadRequest;
 import java.nio.ByteBuffer;
 import java.util.Arrays;
-import java.util.stream.Collectors;
 import org.apache.arrow.memory.BufferAllocator;
 
 public final class CassandraSliceReadPipe {
@@ -36,7 +37,7 @@ public final class CassandraSliceReadPipe {
                 Long.MAX_VALUE), batchSize)) {
             for (int index = 0; index < request.rowCount(); index++) {
                 var entity = request.entity(index);
-                var statement = SimpleStatement.newInstance(queryFor(request, entity));
+                var statement = queryFor(request, entity);
                 var resultSet = session.execute(statement);
                 for (var row : resultSet) {
                     streamer.append(
@@ -53,24 +54,16 @@ public final class CassandraSliceReadPipe {
     }
 
     /** Собирает CQL-запрос для сущности и набора фичей. */
-    private static String queryFor(SliceReadRequest request, byte[] entity) {
-        var features = Arrays.stream(request.featureIds())
-                .mapToObj(String::valueOf)
-                .collect(Collectors.joining(", "));
-        return "SELECT feature_id, value FROM " + request.keyType().slice()
-                + " WHERE key_id = " + request.keyType().keyId()
-                + " AND entity = " + blobLiteral(entity)
-                + " AND feature_id IN (" + features + ")";
-    }
-
-    /** Преобразует байты в CQL-литерал blob. */
-    private static String blobLiteral(byte[] bytes) {
-        var builder = new StringBuilder("0x");
-        for (byte value : bytes) {
-            builder.append(Character.forDigit((value >> 4) & 0xF, 16));
-            builder.append(Character.forDigit(value & 0xF, 16));
-        }
-        return builder.toString();
+    private static SimpleStatement queryFor(SliceReadRequest request, byte[] entity) {
+        Term[] features = Arrays.stream(request.featureIds())
+                .mapToObj(QueryBuilder::literal)
+                .toArray(Term[]::new);
+        return QueryBuilder.selectFrom(request.keyType().slice())
+                .columns("feature_id", "value")
+                .whereColumn("key_id").isEqualTo(QueryBuilder.literal(request.keyType().keyId()))
+                .whereColumn("entity").isEqualTo(QueryBuilder.literal(ByteBuffer.wrap(entity)))
+                .whereColumn("feature_id").in(features)
+                .build();
     }
 
     /** Копирует оставшиеся байты из буфера. */
