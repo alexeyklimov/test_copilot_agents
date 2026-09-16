@@ -16,10 +16,12 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VarBinaryVector;
@@ -28,10 +30,14 @@ import org.apache.arrow.vector.VectorSchemaRoot;
 public final class LegacyJsonArrowCodec {
     private final JsonFactory jsonFactory = new JsonFactory();
     private final FeatureCatalog catalog;
+    private final Map<String, BoundFeature> featureBindingsByName;
+    private final Set<String> ambiguousFeatures;
 
     /** Создает кодек для заданного каталога фичей. */
     public LegacyJsonArrowCodec(FeatureCatalog catalog) {
         this.catalog = catalog;
+        this.featureBindingsByName = buildFeatureBindingsByName(catalog);
+        this.ambiguousFeatures = findAmbiguousFeatures(catalog);
     }
 
     /** Разбирает legacy JSON в Arrow-запрос арендатора. */
@@ -162,21 +168,37 @@ public final class LegacyJsonArrowCodec {
     }
 
     private BoundFeature findBoundFeature(String featureName) {
-        BoundFeature boundFeature = null;
-        for (var candidate : catalog.keyTypes()) {
-            var feature = candidate.featuresByName().get(featureName);
-            if (feature == null) {
-                continue;
-            }
-            if (boundFeature != null) {
-                throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
-            }
-            boundFeature = new BoundFeature(candidate, feature);
+        if (ambiguousFeatures.contains(featureName)) {
+            throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
         }
+        var boundFeature = featureBindingsByName.get(featureName);
         if (boundFeature == null) {
             throw new ReadRequestException(400, "Unknown feature: " + featureName);
         }
         return boundFeature;
+    }
+
+    private static Map<String, BoundFeature> buildFeatureBindingsByName(FeatureCatalog catalog) {
+        var bindings = new LinkedHashMap<String, BoundFeature>();
+        for (var keyType : catalog.keyTypes()) {
+            for (var feature : keyType.featuresByName().values()) {
+                bindings.putIfAbsent(feature.name(), new BoundFeature(keyType, feature));
+            }
+        }
+        return Map.copyOf(bindings);
+    }
+
+    private static Set<String> findAmbiguousFeatures(FeatureCatalog catalog) {
+        var featureNames = new HashSet<String>();
+        var ambiguousFeatures = new HashSet<String>();
+        for (var keyType : catalog.keyTypes()) {
+            for (var featureName : keyType.featuresByName().keySet()) {
+                if (!featureNames.add(featureName)) {
+                    ambiguousFeatures.add(featureName);
+                }
+            }
+        }
+        return Set.copyOf(ambiguousFeatures);
     }
 
     private static List<SliceReadRequest> buildRequests(
