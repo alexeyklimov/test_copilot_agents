@@ -140,7 +140,6 @@ public final class LegacyJsonArrowCodec {
         private final JsonGenerator generator;
         private String currentKeyName;
         private String currentEntity;
-        private long currentOrdinal = Long.MIN_VALUE;
         private boolean started;
 
         /** Инициализирует writer и открывает JSON-массив. */
@@ -152,19 +151,16 @@ public final class LegacyJsonArrowCodec {
 
         /** Принимает Arrow-батч и сразу пишет JSON-ответ в поток. */
         public void consume(SliceReadRequest request, VectorSchemaRoot batch) throws IOException {
-            var ordinals = (org.apache.arrow.vector.BigIntVector) batch.getVector("request_ordinal");
             var entities = (VarBinaryVector) batch.getVector("entity");
             var featureIds = (IntVector) batch.getVector("feature_id");
             var values = (VarBinaryVector) batch.getVector("value");
             for (int row = 0; row < batch.getRowCount(); row++) {
-                var ordinal = ordinals.get(row);
                 var entity = new String(entities.get(row), StandardCharsets.UTF_8);
                 var keyName = request.keyType().name();
-                if (ordinal != currentOrdinal || !keyName.equals(currentKeyName) || !entity.equals(currentEntity)) {
+                if (!keyName.equals(currentKeyName) || !entity.equals(currentEntity)) {
                     flushCurrent();
                     currentKeyName = keyName;
                     currentEntity = entity;
-                    currentOrdinal = ordinal;
                     generator.writeStartObject();
                     generator.writeStringField("key", currentKeyName);
                     generator.writeStringField("key_value", currentEntity);
@@ -194,7 +190,6 @@ public final class LegacyJsonArrowCodec {
             generator.writeEndObject();
             currentKeyName = null;
             currentEntity = null;
-            currentOrdinal = Long.MIN_VALUE;
             generator.flush();
         }
 
