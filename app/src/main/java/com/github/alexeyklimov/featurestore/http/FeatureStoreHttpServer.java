@@ -5,6 +5,7 @@ import com.github.alexeyklimov.featurestore.service.ReadRequestException;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
 import com.sun.net.httpserver.HttpServer;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -60,9 +61,12 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             try (var requestBody = exchange.getRequestBody()) {
                 var preparedRead = readService.prepare(tenantId, requestBody);
-                exchange.sendResponseHeaders(200, 0);
                 try (preparedRead) {
-                    preparedRead.stream(exchange.getResponseBody());
+                    var responseBuffer = new ByteArrayOutputStream();
+                    preparedRead.stream(responseBuffer);
+                    var payload = responseBuffer.toByteArray();
+                    exchange.sendResponseHeaders(200, payload.length);
+                    exchange.getResponseBody().write(payload);
                 }
             } catch (ReadRequestException exception) {
                 if (!exchange.getResponseHeaders().containsKey("X-Error")) {

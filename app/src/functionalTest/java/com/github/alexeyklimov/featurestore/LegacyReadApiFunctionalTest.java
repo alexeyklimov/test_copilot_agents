@@ -2,14 +2,19 @@ package com.github.alexeyklimov.featurestore;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import com.github.alexeyklimov.featurestore.model.FeatureCatalog;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonToken;
 import com.github.alexeyklimov.featurestore.model.FeatureCatalogDefaults;
+import com.github.alexeyklimov.featurestore.service.LegacyJsonArrowCodec;
 import com.github.alexeyklimov.featurestore.testsupport.TestEnvironment;
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import org.apache.arrow.memory.RootAllocator;
 import org.junit.jupiter.api.Test;
 
 class LegacyReadApiFunctionalTest {
@@ -84,6 +89,47 @@ class LegacyReadApiFunctionalTest {
                       "features": ["feature1", "feature2", "feature3", "feature4"]
                     }
                     """);
+
+            assertThat(response.statusCode()).isEqualTo(429);
+            assertThat(response.body()).contains("Tenant quota exceeded");
+        }
+    }
+
+    @Test
+    void rejectsRequestWhenInflightRequestAndResponseDataExceedQuota() throws Exception {
+        var keyType = FeatureCatalog.KeyType.of(
+                "user_id",
+                1,
+                "user_features",
+                new FeatureCatalog.FeatureDefinition("feature1", 101, FeatureCatalog.ValueEncoding.INT32));
+        var requestBody = """
+                {
+                  "keys": [{"user_id": "userA"}],
+                  "features": ["feature1"]
+                }
+                """;
+
+        long requestBytes;
+        try (var allocator = new RootAllocator()) {
+            var codec = new LegacyJsonArrowCodec(new FeatureCatalog(List.of(keyType), List.of()));
+            try (var request = codec.parse(
+                    new ByteArrayInputStream(requestBody.getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                    allocator)) {
+                requestBytes = request.arrowBytes();
+            }
+        }
+
+        var tightCatalog = new FeatureCatalog(
+                List.of(keyType),
+                List.of(new FeatureCatalog.TenantPolicy(
+                        "tenant-rate-limit",
+                        Set.of("user_id"),
+                        new FeatureCatalog.RequestQuota(10, 10, requestBytes + 1))));
+
+        try (var environment = TestEnvironment.start(tightCatalog)) {
+            environment.primeRows(TestEnvironment.readQuery("user_features", 1, "userA", 101), Map.of(101, 1));
+
+            var response = environment.post("tenant-rate-limit", requestBody);
 
             assertThat(response.statusCode()).isEqualTo(429);
             assertThat(response.body()).contains("Tenant quota exceeded");

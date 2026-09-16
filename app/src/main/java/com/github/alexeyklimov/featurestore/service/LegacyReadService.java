@@ -2,13 +2,14 @@ package com.github.alexeyklimov.featurestore.service;
 
 import com.github.alexeyklimov.featurestore.cassandra.CassandraSliceReadPipe;
 import java.io.InputStream;
+import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class LegacyReadService {
     private final RootAllocator allocator;
     private final LegacyJsonArrowCodec codec;
     private final TenantAccessController accessController;
-    private final CassandraSliceReadPipe sliceReadPipe;
+    private final SliceReadStreamer sliceReadStreamer;
 
     /** Создает сервис чтения со всеми зависимостями. */
     public LegacyReadService(
@@ -20,7 +21,19 @@ public final class LegacyReadService {
         this.allocator = allocator;
         this.codec = codec;
         this.accessController = accessController;
-        this.sliceReadPipe = sliceReadPipe;
+        this.sliceReadStreamer = sliceReadPipe::stream;
+    }
+
+    LegacyReadService(
+            RootAllocator allocator,
+            LegacyJsonArrowCodec codec,
+            TenantAccessController accessController,
+            SliceReadStreamer sliceReadStreamer
+    ) {
+        this.allocator = allocator;
+        this.codec = codec;
+        this.accessController = accessController;
+        this.sliceReadStreamer = sliceReadStreamer;
     }
 
     /** Готовит авторизованный запрос к чтению. */
@@ -35,21 +48,29 @@ public final class LegacyReadService {
     }
 
     public final class PreparedRead implements AutoCloseable {
-        private final ArrowMessages.ArrowTenantRequest request;
+        private final TenantAccessController.AuthorizedTenantRequest authorizedRequest;
 
         /** Сохраняет подготовленный и проверенный запрос. */
-        private PreparedRead(ArrowMessages.ArrowTenantRequest request) {
-            this.request = request;
+        private PreparedRead(TenantAccessController.AuthorizedTenantRequest authorizedRequest) {
+            this.authorizedRequest = authorizedRequest;
         }
 
         /** Выполняет чтение и пишет ответ в поток. */
         public void stream(java.io.OutputStream outputStream) throws Exception {
             try (var writer = codec.newResponseWriter(outputStream)) {
-                for (var sliceRequest : request.sliceRequests()) {
-                    sliceReadPipe.stream(
+                for (var sliceRequest : authorizedRequest.request().sliceRequests()) {
+                    sliceReadStreamer.stream(
                             sliceRequest,
                             allocator,
-                            (currentRequest, batch) -> writer.consume(currentRequest, batch));
+                            (currentRequest, batch) -> {
+                                var batchBytes = ArrowMessages.vectorRootBytes(batch);
+                                accessController.reserveResponseInflightBytes(authorizedRequest, batchBytes);
+                                try {
+                                    writer.consume(currentRequest, batch);
+                                } finally {
+                                    accessController.releaseResponseInflightBytes(authorizedRequest, batchBytes);
+                                }
+                            });
                 }
             }
         }
@@ -57,7 +78,16 @@ public final class LegacyReadService {
         /** Освобождает ресурсы подготовленного чтения. */
         @Override
         public void close() {
-            request.close();
+            authorizedRequest.close();
         }
+    }
+
+    @FunctionalInterface
+    interface SliceReadStreamer {
+        void stream(
+                ArrowMessages.SliceReadRequest request,
+                BufferAllocator allocator,
+                ArrowMessages.ResultBatchConsumer consumer
+        ) throws Exception;
     }
 }
