@@ -150,6 +150,10 @@ public final class TestEnvironment implements AutoCloseable {
         return URI.create("http://127.0.0.1:" + server.port() + path);
     }
 
+    public CqlSession session() {
+        return session;
+    }
+
     @Override
     public void close() throws Exception {
         server.close();

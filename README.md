@@ -13,7 +13,10 @@ PoC read-api for Cassandra-backed online feature store access with:
 
 - `/app/src/main/java` — service, HTTP, Arrow, and Cassandra integration
 - `/app/src/functionalTest/java` — functional tests against Simulacron
+- `/app/src/jmh/java` — JMH latency/throughput benchmarks for read-path stages and full HTTP reads
 - `/app/src/loadTest/java` — load tests for 100 entities × 600 features requests
+- `/docker` — cpu-limited container entrypoint for per-core benchmark runs
+- `/.github/workflows/performance-regression.yml` — per-PR performance regression workflow
 
 ## Architecture overview
 
@@ -63,7 +66,23 @@ Useful tasks:
 
 ```bash
 ./gradlew functionalTest
+./gradlew jmh
 ./gradlew loadTest
+./gradlew heapSaturationBenchmark
+```
+
+Benchmark knobs:
+
+- `-Pbenchmark.profile=ci` — shorter JMH warmup/measurement profile for CI
+- `-Pjmh.resultFile=/absolute/path/results.json` — writes JMH JSON results for comparison
+- `-Pheap.profile=ci` — smaller heap saturation scenario tuned for CI
+- `-Pheap.maxHeap=256m` — overrides the dedicated heap-saturation JVM size
+
+Per-core benchmarks in Docker:
+
+```bash
+docker build -f docker/performance.Dockerfile -t feature-store-perf .
+docker run --rm --cpus 1 --memory 2g feature-store-perf jmh -Pbenchmark.profile=ci
 ```
 
 ## Runtime
