@@ -10,6 +10,7 @@ import com.github.alexeyklimov.featurestore.service.LegacyJsonArrowCodec;
 import com.github.alexeyklimov.featurestore.testsupport.TestEnvironment;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -51,6 +52,58 @@ class LegacyReadApiFunctionalTest {
                     new ResponseEntry("user_id", "userA", Map.of("feature1", 1, "feature2", 2, "feature3", 3)),
                     new ResponseEntry("user_id", "userB", Map.of("feature1", 4, "feature2", 5, "feature3", 6)),
                     new ResponseEntry("car_id", "carA", Map.of("feature4", 10)));
+        }
+    }
+
+    @Test
+    void waitsForSlowSliceAndStillReturnsCombinedResponse() throws Exception {
+        var slowSliceDelay = Duration.ofMillis(250);
+        try (var environment = TestEnvironment.start(FeatureCatalogDefaults.create())) {
+            environment.primeRows(TestEnvironment.readQuery("user_features", 1, "userA", 101), Map.of(101, 1), slowSliceDelay);
+            environment.primeRows(TestEnvironment.readQuery("car_features", 2, "carA", 201), Map.of(201, 10));
+
+            var startedAt = System.nanoTime();
+            var response = environment.post(
+                    "tenant-a",
+                    """
+                    {
+                      "keys": [{"user_id": "userA"}, {"car_id": "carA"}],
+                      "features": ["feature1", "feature4"]
+                    }
+                    """);
+            var latency = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(response.statusCode()).isEqualTo(200);
+            assertThat(latency).isGreaterThanOrEqualTo(Duration.ofMillis(200));
+            assertThat(responseEntries(response.body())).containsExactly(
+                    new ResponseEntry("user_id", "userA", Map.of("feature1", 1)),
+                    new ResponseEntry("car_id", "carA", Map.of("feature4", 10)));
+        }
+    }
+
+    @Test
+    void failsWholeRequestWhenOneSliceTimesOut() throws Exception {
+        var requestTimeout = Duration.ofMillis(200);
+        var slowSliceDelay = Duration.ofMillis(750);
+        try (var environment = TestEnvironment.start(FeatureCatalogDefaults.create(), requestTimeout)) {
+            environment.primeRows(TestEnvironment.readQuery("user_features", 1, "userA", 101), Map.of(101, 1));
+            environment.primeRows(TestEnvironment.readQuery("car_features", 2, "carA", 201), Map.of(201, 10), slowSliceDelay);
+
+            var startedAt = System.nanoTime();
+            var response = environment.post(
+                    "tenant-a",
+                    """
+                    {
+                      "keys": [{"user_id": "userA"}, {"car_id": "carA"}],
+                      "features": ["feature1", "feature4"]
+                    }
+                    """);
+            var latency = Duration.ofNanos(System.nanoTime() - startedAt);
+
+            assertThat(response.statusCode()).isEqualTo(500);
+            assertThat(response.body()).contains("Internal server error");
+            assertThat(latency).isGreaterThanOrEqualTo(Duration.ofMillis(100));
+            assertThat(latency).isLessThan(Duration.ofSeconds(3));
         }
     }
 

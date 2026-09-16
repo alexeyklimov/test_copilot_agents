@@ -1,8 +1,11 @@
 package com.github.alexeyklimov.featurestore.testsupport;
 
 import com.datastax.oss.driver.api.core.CqlSession;
+import com.datastax.oss.driver.api.core.config.DefaultDriverOption;
+import com.datastax.oss.driver.api.core.config.DriverConfigLoader;
 import com.datastax.oss.driver.api.querybuilder.QueryBuilder;
 import com.datastax.oss.driver.api.querybuilder.term.Term;
+import com.datastax.oss.simulacron.common.result.Result;
 import com.datastax.oss.simulacron.common.cluster.NodeSpec;
 import com.datastax.oss.simulacron.common.result.SuccessResult;
 import com.datastax.oss.simulacron.common.stubbing.Prime;
@@ -31,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.regex.Pattern;
 import org.apache.arrow.memory.RootAllocator;
 
@@ -67,6 +71,10 @@ public final class TestEnvironment implements AutoCloseable {
     }
 
     public static TestEnvironment start(FeatureCatalog catalog) throws Exception {
+        return start(catalog, null);
+    }
+
+    public static TestEnvironment start(FeatureCatalog catalog, Duration requestTimeout) throws Exception {
         var simulacron = Server.builder().build();
         var node = simulacron.register(NodeSpec.builder().build());
         var primedQueries = ConcurrentHashMap.<String>newKeySet();
@@ -74,25 +82,58 @@ public final class TestEnvironment implements AutoCloseable {
         var allocator = new RootAllocator();
         var address = (InetSocketAddress) node.getAddress();
         waitUntilListening(address);
-        var session = CqlSession.builder()
+        var sessionBuilder = CqlSession.builder()
                 .addContactPoint(address)
-                .withLocalDatacenter("dummy")
-                .build();
+                .withLocalDatacenter("dummy");
+        if (requestTimeout != null) {
+            sessionBuilder.withConfigLoader(DriverConfigLoader.programmaticBuilder()
+                    .withDuration(DefaultDriverOption.REQUEST_TIMEOUT, requestTimeout)
+                    .build());
+        }
+        var session = sessionBuilder.build();
         var server = FeatureStoreApplication.createServer(0, allocator, session, catalog);
         server.start();
         return new TestEnvironment(simulacron, node, allocator, session, server, primedQueries);
     }
 
     public void primeRows(String query, Map<Integer, Integer> featureValues) {
+        primeRows(query, featureValues, Duration.ZERO);
+    }
+
+    public void primeRows(String query, Map<Integer, Integer> featureValues, Duration delay) {
+        var rows = new LinkedHashMap<Integer, byte[]>();
+        for (var entry : featureValues.entrySet()) {
+            rows.put(entry.getKey(), intBytes(entry.getValue()));
+        }
+        primeBlobRows(query, rows, delay);
+    }
+
+    public void primeBlobRows(String query, Map<Integer, byte[]> featureValues) {
+        primeBlobRows(query, featureValues, Duration.ZERO);
+    }
+
+    public void primeBlobRows(String query, Map<Integer, byte[]> featureValues, Duration delay) {
         var rows = PrimeDsl.rows().columnTypes("feature_id", "int", "value", "blob");
         for (var entry : featureValues.entrySet()) {
-            rows.row("feature_id", entry.getKey(), "value", ByteBuffer.wrap(intBytes(entry.getValue())));
+            rows.row("feature_id", entry.getKey(), "value", ByteBuffer.wrap(entry.getValue()));
         }
-        prime(PrimeDsl.when(query).then(rows).build());
+        prime(PrimeDsl.when(query).then(rows), delay);
     }
 
     public void primeNoRows(String query) {
-        prime(PrimeDsl.when(query).then(PrimeDsl.noRows()).build());
+        primeNoRows(query, Duration.ZERO);
+    }
+
+    public void primeNoRows(String query, Duration delay) {
+        prime(PrimeDsl.when(query).then(PrimeDsl.noRows()), delay);
+    }
+
+    public void primeResult(String query, Result result) {
+        primeResult(query, result, Duration.ZERO);
+    }
+
+    public void primeResult(String query, Result result, Duration delay) {
+        prime(PrimeDsl.when(query).then(result), delay);
     }
 
     public HttpResponse<String> post(String tenantId, String body) throws IOException, InterruptedException {
@@ -107,6 +148,10 @@ public final class TestEnvironment implements AutoCloseable {
 
     public URI uri(String path) {
         return URI.create("http://127.0.0.1:" + server.port() + path);
+    }
+
+    public CqlSession session() {
+        return session;
     }
 
     @Override
@@ -144,6 +189,13 @@ public final class TestEnvironment implements AutoCloseable {
             primedQueries.add(query.query);
         }
         node.prime(prime);
+    }
+
+    private void prime(PrimeDsl.PrimeBuilder builder, Duration delay) {
+        if (!delay.isZero() && !delay.isNegative()) {
+            builder.delay(delay.toMillis(), TimeUnit.MILLISECONDS);
+        }
+        prime(builder.build());
     }
 
     private static String blobLiteral(byte[] bytes) {
