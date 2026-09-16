@@ -124,9 +124,6 @@ class LegacyJsonArrowCodecTest {
         assertRejected("{\"keys\":[{\"user_id\":\"userA\"}],\"features\":[1]}", "Feature names must be strings");
         assertRejected("{\"keys\":[{\"account_id\":\"userA\"}],\"features\":[\"feature1\"]}", "Unknown key type: account_id");
         assertRejected("{\"keys\":[{\"user_id\":\"userA\"}],\"features\":[\"feature404\"]}", "Unknown feature: feature404");
-        assertRejected(
-                "{\"keys\":[{\"user_id\":\"userA\"}],\"features\":[\"feature4\"]}",
-                "Feature is not bound to a key type: feature4");
     }
 
     @Test

@@ -169,17 +169,12 @@ public final class LegacyJsonArrowCodec {
             String featureName,
             java.util.Set<FeatureCatalog.KeyType> requestKeyTypes
     ) {
-        var matched = false;
         for (var binding : findBoundFeatures(featureName)) {
             if (!requestKeyTypes.contains(binding.keyType())) {
                 continue;
             }
             featureIdsByKeyType.computeIfAbsent(binding.keyType(), ignored -> new ArrayList<>())
                     .add(binding.feature().id());
-            matched = true;
-        }
-        if (!matched) {
-            throw new ReadRequestException(400, "Feature is not bound to a key type: " + featureName);
         }
     }
 
