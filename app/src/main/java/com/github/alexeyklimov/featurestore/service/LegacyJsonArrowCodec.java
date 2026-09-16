@@ -41,38 +41,70 @@ public final class LegacyJsonArrowCodec {
         var requestedFeatures = new LinkedHashSet<String>();
         long keyCount = 0;
         long ordinal = 0;
-        try (var parser = jsonFactory.createParser(inputStream)) {
-            require(parser.nextToken() == JsonToken.START_OBJECT, "Request payload must be a JSON object");
-            while (parser.nextToken() != JsonToken.END_OBJECT) {
-                var fieldName = parser.currentName();
-                var token = parser.nextToken();
-                switch (fieldName) {
-                    case "keys" -> {
-                        require(token == JsonToken.START_ARRAY, "'keys' must be an array");
-                        while (parser.nextToken() != JsonToken.END_ARRAY) {
-                            require(parser.currentToken() == JsonToken.START_OBJECT, "Each key entry must be an object");
-                            require(parser.nextToken() == JsonToken.FIELD_NAME, "Each key entry must contain exactly one field");
-                            var keyName = parser.currentName();
-                            var keyType = catalog.findKeyType(keyName)
-                                    .orElseThrow(() -> new ReadRequestException(400, "Unknown key type: " + keyName));
-                            require(parser.nextToken() == JsonToken.VALUE_STRING, "Key values must be strings");
-                            var entity = parser.getText().getBytes(StandardCharsets.UTF_8);
-                            require(parser.nextToken() == JsonToken.END_OBJECT, "Each key entry must contain exactly one field");
-                            builders.computeIfAbsent(keyType, ignored -> new RequestTableBuilder(keyType, requestAllocator))
-                                    .append(ordinal++, entity);
-                            keyCount++;
+        try {
+            try (var parser = jsonFactory.createParser(inputStream)) {
+                require(parser.nextToken() == JsonToken.START_OBJECT, "Request payload must be a JSON object");
+                while (parser.nextToken() != JsonToken.END_OBJECT) {
+                    var fieldName = parser.currentName();
+                    var token = parser.nextToken();
+                    switch (fieldName) {
+                        case "keys" -> {
+                            require(token == JsonToken.START_ARRAY, "'keys' must be an array");
+                            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                                require(parser.currentToken() == JsonToken.START_OBJECT, "Each key entry must be an object");
+                                require(parser.nextToken() == JsonToken.FIELD_NAME, "Each key entry must contain exactly one field");
+                                var keyName = parser.currentName();
+                                var keyType = catalog.findKeyType(keyName)
+                                        .orElseThrow(() -> new ReadRequestException(400, "Unknown key type: " + keyName));
+                                require(parser.nextToken() == JsonToken.VALUE_STRING, "Key values must be strings");
+                                var entity = parser.getText().getBytes(StandardCharsets.UTF_8);
+                                require(parser.nextToken() == JsonToken.END_OBJECT, "Each key entry must contain exactly one field");
+                                builders.computeIfAbsent(keyType, ignored -> new RequestTableBuilder(keyType, requestAllocator))
+                                        .append(ordinal++, entity);
+                                keyCount++;
+                            }
                         }
-                    }
-                    case "features" -> {
-                        require(token == JsonToken.START_ARRAY, "'features' must be an array");
-                        while (parser.nextToken() != JsonToken.END_ARRAY) {
-                            require(parser.currentToken() == JsonToken.VALUE_STRING, "Feature names must be strings");
-                            requestedFeatures.add(parser.getText());
+                        case "features" -> {
+                            require(token == JsonToken.START_ARRAY, "'features' must be an array");
+                            while (parser.nextToken() != JsonToken.END_ARRAY) {
+                                require(parser.currentToken() == JsonToken.VALUE_STRING, "Feature names must be strings");
+                                requestedFeatures.add(parser.getText());
+                            }
                         }
+                        default -> parser.skipChildren();
                     }
-                    default -> parser.skipChildren();
                 }
             }
+
+            if (keyCount == 0) {
+                throw new ReadRequestException(400, "Request must contain at least one key");
+            }
+            if (requestedFeatures.isEmpty()) {
+                throw new ReadRequestException(400, "Request must contain at least one feature");
+            }
+
+            var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
+            for (var featureName : requestedFeatures) {
+                var feature = catalog.findFeature(featureName)
+                        .orElseThrow(() -> new ReadRequestException(400, "Unknown feature: " + featureName));
+                var keyType = catalog.keyTypes().stream()
+                        .filter(candidate -> candidate.featuresByName().containsKey(featureName))
+                        .findFirst()
+                        .orElseThrow(() -> new ReadRequestException(400, "Feature is not bound to a key type: " + featureName));
+                featureIdsByKeyType.computeIfAbsent(keyType, ignored -> new ArrayList<>()).add(feature.id());
+            }
+
+            var requests = new ArrayList<SliceReadRequest>();
+            for (var entry : builders.entrySet()) {
+                var featureIds = featureIdsByKeyType.getOrDefault(entry.getKey(), List.of())
+                        .stream()
+                        .mapToInt(Integer::intValue)
+                        .toArray();
+                requests.add(entry.getValue().build(featureIds));
+            }
+
+            var totalBytes = totalArrowBytes(requests);
+            return new ArrowTenantRequest(requestAllocator, requests, keyCount, keyCount * requestedFeatures.size(), totalBytes);
         } catch (Exception exception) {
             closeAll(builders.values());
             requestAllocator.close();
@@ -81,42 +113,6 @@ public final class LegacyJsonArrowCodec {
             }
             throw exception;
         }
-
-        if (keyCount == 0) {
-            closeAll(builders.values());
-            requestAllocator.close();
-            throw new ReadRequestException(400, "Request must contain at least one key");
-        }
-        if (requestedFeatures.isEmpty()) {
-            closeAll(builders.values());
-            requestAllocator.close();
-            throw new ReadRequestException(400, "Request must contain at least one feature");
-        }
-
-        var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
-        for (var featureName : requestedFeatures) {
-            var feature = catalog.findFeature(featureName)
-                    .orElseThrow(() -> new ReadRequestException(400, "Unknown feature: " + featureName));
-            var keyType = builders.keySet().stream()
-                    .filter(candidate -> candidate.featuresByName().containsKey(featureName))
-                    .findFirst()
-                    .orElseThrow(() -> new ReadRequestException(
-                            400,
-                            "Feature is not bound to a key type present in the request: " + featureName));
-            featureIdsByKeyType.computeIfAbsent(keyType, ignored -> new ArrayList<>()).add(feature.id());
-        }
-
-        var requests = new ArrayList<SliceReadRequest>();
-        for (var entry : builders.entrySet()) {
-            var featureIds = featureIdsByKeyType.getOrDefault(entry.getKey(), List.of())
-                    .stream()
-                    .mapToInt(Integer::intValue)
-                    .toArray();
-            requests.add(entry.getValue().build(featureIds));
-        }
-
-        var totalBytes = totalArrowBytes(requests);
-        return new ArrowTenantRequest(requestAllocator, requests, keyCount, keyCount * requestedFeatures.size(), totalBytes);
     }
 
     /** Создает writer для JSON-ответа из Arrow-потока. */
