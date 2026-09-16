@@ -39,80 +39,11 @@ public final class LegacyJsonArrowCodec {
         var requestAllocator = parentAllocator.newChildAllocator("tenant-request", 0, Long.MAX_VALUE);
         var builders = new LinkedHashMap<FeatureCatalog.KeyType, RequestTableBuilder>();
         var requestedFeatures = new LinkedHashSet<String>();
-        long keyCount = 0;
-        long ordinal = 0;
-        try {
-            try (var parser = jsonFactory.createParser(inputStream)) {
-                require(parser.nextToken() == JsonToken.START_OBJECT, "Request payload must be a JSON object");
-                while (parser.nextToken() != JsonToken.END_OBJECT) {
-                    var fieldName = parser.currentName();
-                    var token = parser.nextToken();
-                    switch (fieldName) {
-                        case "keys" -> {
-                            require(token == JsonToken.START_ARRAY, "'keys' must be an array");
-                            while (parser.nextToken() != JsonToken.END_ARRAY) {
-                                require(parser.currentToken() == JsonToken.START_OBJECT, "Each key entry must be an object");
-                                require(parser.nextToken() == JsonToken.FIELD_NAME, "Each key entry must contain exactly one field");
-                                var keyName = parser.currentName();
-                                var keyType = catalog.findKeyType(keyName)
-                                        .orElseThrow(() -> new ReadRequestException(400, "Unknown key type: " + keyName));
-                                require(parser.nextToken() == JsonToken.VALUE_STRING, "Key values must be strings");
-                                var entity = parser.getText().getBytes(StandardCharsets.UTF_8);
-                                require(parser.nextToken() == JsonToken.END_OBJECT, "Each key entry must contain exactly one field");
-                                builders.computeIfAbsent(keyType, ignored -> new RequestTableBuilder(keyType, requestAllocator))
-                                        .append(ordinal++, entity);
-                                keyCount++;
-                            }
-                        }
-                        case "features" -> {
-                            require(token == JsonToken.START_ARRAY, "'features' must be an array");
-                            while (parser.nextToken() != JsonToken.END_ARRAY) {
-                                require(parser.currentToken() == JsonToken.VALUE_STRING, "Feature names must be strings");
-                                requestedFeatures.add(parser.getText());
-                            }
-                        }
-                        default -> parser.skipChildren();
-                    }
-                }
-            }
-
-            if (keyCount == 0) {
-                throw new ReadRequestException(400, "Request must contain at least one key");
-            }
-            if (requestedFeatures.isEmpty()) {
-                throw new ReadRequestException(400, "Request must contain at least one feature");
-            }
-
-            var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
-            for (var featureName : requestedFeatures) {
-                FeatureCatalog.KeyType keyType = null;
-                FeatureCatalog.FeatureDefinition feature = null;
-                for (var candidate : catalog.keyTypes()) {
-                    var boundFeature = candidate.featuresByName().get(featureName);
-                    if (boundFeature == null) {
-                        continue;
-                    }
-                    if (feature != null) {
-                        throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
-                    }
-                    keyType = candidate;
-                    feature = boundFeature;
-                }
-                if (feature == null || keyType == null) {
-                    throw new ReadRequestException(400, "Unknown feature: " + featureName);
-                }
-                featureIdsByKeyType.computeIfAbsent(keyType, ignored -> new ArrayList<>()).add(feature.id());
-            }
-
-            var requests = new ArrayList<SliceReadRequest>();
-            for (var entry : builders.entrySet()) {
-                var featureIds = featureIdsByKeyType.getOrDefault(entry.getKey(), List.of())
-                        .stream()
-                        .mapToInt(Integer::intValue)
-                        .toArray();
-                requests.add(entry.getValue().build(featureIds));
-            }
-
+        try (var parser = jsonFactory.createParser(inputStream)) {
+            var keyCount = parseRequest(parser, requestAllocator, builders, requestedFeatures);
+            validateParsedRequest(keyCount, requestedFeatures);
+            var featureIdsByKeyType = resolveFeatureIdsByKeyType(requestedFeatures);
+            var requests = buildRequests(builders, featureIdsByKeyType);
             var totalBytes = totalArrowBytes(requests);
             return new ArrowTenantRequest(requestAllocator, requests, keyCount, keyCount * requestedFeatures.size(), totalBytes);
         } catch (Exception exception) {
@@ -130,6 +61,139 @@ public final class LegacyJsonArrowCodec {
         return new JsonArrowResponseWriter(jsonFactory.createGenerator(outputStream));
     }
 
+    private long parseRequest(
+            com.fasterxml.jackson.core.JsonParser parser,
+            BufferAllocator requestAllocator,
+            Map<FeatureCatalog.KeyType, RequestTableBuilder> builders,
+            LinkedHashSet<String> requestedFeatures
+    ) throws IOException {
+        require(parser.nextToken() == JsonToken.START_OBJECT, "Request payload must be a JSON object");
+        long ordinal = 0;
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            ordinal = parseTopLevelField(parser, requestAllocator, builders, requestedFeatures, ordinal);
+        }
+        return ordinal;
+    }
+
+    private long parseTopLevelField(
+            com.fasterxml.jackson.core.JsonParser parser,
+            BufferAllocator requestAllocator,
+            Map<FeatureCatalog.KeyType, RequestTableBuilder> builders,
+            LinkedHashSet<String> requestedFeatures,
+            long ordinal
+    ) throws IOException {
+        var fieldName = parser.currentName();
+        var token = parser.nextToken();
+        return switch (fieldName) {
+            case "keys" -> parseKeys(parser, token, requestAllocator, builders, ordinal);
+            case "features" -> {
+                parseFeatures(parser, token, requestedFeatures);
+                yield ordinal;
+            }
+            default -> {
+                parser.skipChildren();
+                yield ordinal;
+            }
+        };
+    }
+
+    private long parseKeys(
+            com.fasterxml.jackson.core.JsonParser parser,
+            JsonToken token,
+            BufferAllocator requestAllocator,
+            Map<FeatureCatalog.KeyType, RequestTableBuilder> builders,
+            long ordinal
+    ) throws IOException {
+        require(token == JsonToken.START_ARRAY, "'keys' must be an array");
+        while (parser.nextToken() != JsonToken.END_ARRAY) {
+            ordinal = appendKey(parser, requestAllocator, builders, ordinal);
+        }
+        return ordinal;
+    }
+
+    private long appendKey(
+            com.fasterxml.jackson.core.JsonParser parser,
+            BufferAllocator requestAllocator,
+            Map<FeatureCatalog.KeyType, RequestTableBuilder> builders,
+            long ordinal
+    ) throws IOException {
+        require(parser.currentToken() == JsonToken.START_OBJECT, "Each key entry must be an object");
+        require(parser.nextToken() == JsonToken.FIELD_NAME, "Each key entry must contain exactly one field");
+        var keyName = parser.currentName();
+        var keyType = catalog.findKeyType(keyName)
+                .orElseThrow(() -> new ReadRequestException(400, "Unknown key type: " + keyName));
+        require(parser.nextToken() == JsonToken.VALUE_STRING, "Key values must be strings");
+        var entity = parser.getText().getBytes(StandardCharsets.UTF_8);
+        require(parser.nextToken() == JsonToken.END_OBJECT, "Each key entry must contain exactly one field");
+        builders.computeIfAbsent(keyType, ignored -> new RequestTableBuilder(keyType, requestAllocator))
+                .append(ordinal, entity);
+        return ordinal + 1;
+    }
+
+    private static void parseFeatures(
+            com.fasterxml.jackson.core.JsonParser parser,
+            JsonToken token,
+            LinkedHashSet<String> requestedFeatures
+    ) throws IOException {
+        require(token == JsonToken.START_ARRAY, "'features' must be an array");
+        while (parser.nextToken() != JsonToken.END_ARRAY) {
+            require(parser.currentToken() == JsonToken.VALUE_STRING, "Feature names must be strings");
+            requestedFeatures.add(parser.getText());
+        }
+    }
+
+    private static void validateParsedRequest(long keyCount, LinkedHashSet<String> requestedFeatures) {
+        if (keyCount == 0) {
+            throw new ReadRequestException(400, "Request must contain at least one key");
+        }
+        if (requestedFeatures.isEmpty()) {
+            throw new ReadRequestException(400, "Request must contain at least one feature");
+        }
+    }
+
+    private Map<FeatureCatalog.KeyType, List<Integer>> resolveFeatureIdsByKeyType(LinkedHashSet<String> requestedFeatures) {
+        var featureIdsByKeyType = new LinkedHashMap<FeatureCatalog.KeyType, List<Integer>>();
+        for (var featureName : requestedFeatures) {
+            var boundFeature = findBoundFeature(featureName);
+            featureIdsByKeyType.computeIfAbsent(boundFeature.keyType(), ignored -> new ArrayList<>())
+                    .add(boundFeature.feature().id());
+        }
+        return featureIdsByKeyType;
+    }
+
+    private BoundFeature findBoundFeature(String featureName) {
+        BoundFeature boundFeature = null;
+        for (var candidate : catalog.keyTypes()) {
+            var feature = candidate.featuresByName().get(featureName);
+            if (feature == null) {
+                continue;
+            }
+            if (boundFeature != null) {
+                throw new ReadRequestException(400, "Feature is bound to multiple key types: " + featureName);
+            }
+            boundFeature = new BoundFeature(candidate, feature);
+        }
+        if (boundFeature == null) {
+            throw new ReadRequestException(400, "Unknown feature: " + featureName);
+        }
+        return boundFeature;
+    }
+
+    private static List<SliceReadRequest> buildRequests(
+            Map<FeatureCatalog.KeyType, RequestTableBuilder> builders,
+            Map<FeatureCatalog.KeyType, List<Integer>> featureIdsByKeyType
+    ) {
+        var requests = new ArrayList<SliceReadRequest>();
+        for (var entry : builders.entrySet()) {
+            var featureIds = featureIdsByKeyType.getOrDefault(entry.getKey(), List.of())
+                    .stream()
+                    .mapToInt(Integer::intValue)
+                    .toArray();
+            requests.add(entry.getValue().build(featureIds));
+        }
+        return requests;
+    }
+
     /** Проверяет условие и выбрасывает ошибку запроса. */
     private static void require(boolean condition, String message) {
         if (!condition) {
@@ -142,6 +206,9 @@ public final class LegacyJsonArrowCodec {
         for (var builder : builders) {
             builder.close();
         }
+    }
+
+    private record BoundFeature(FeatureCatalog.KeyType keyType, FeatureCatalog.FeatureDefinition feature) {
     }
 
     public static final class JsonArrowResponseWriter implements AutoCloseable {
