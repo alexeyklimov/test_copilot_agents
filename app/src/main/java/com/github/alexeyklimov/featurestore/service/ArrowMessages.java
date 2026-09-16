@@ -204,10 +204,12 @@ public final class ArrowMessages {
         private final IntVector featureIds;
         private final VarBinaryVector values;
         private final int batchSize;
+        private final int pageSizeBytes;
         private int rowCount;
+        private long bufferedBytes;
 
         /** Создает стример батчей результата. */
-        public ResultTableStreamer(BufferAllocator allocator, int batchSize) {
+        public ResultTableStreamer(BufferAllocator allocator, int batchSize, int pageSizeBytes) {
             this.allocator = allocator;
             this.root = newResultRoot(allocator);
             this.ordinals = (BigIntVector) root.getVector("request_ordinal");
@@ -215,18 +217,27 @@ public final class ArrowMessages {
             this.featureIds = (IntVector) root.getVector("feature_id");
             this.values = (VarBinaryVector) root.getVector("value");
             this.batchSize = batchSize;
+            this.pageSizeBytes = pageSizeBytes;
             root.allocateNew();
         }
 
         /** Добавляет строку результата и сбрасывает батч при необходимости. */
         public void append(long ordinal, byte[] entity, int featureId, byte[] value, SliceReadRequest request, ResultBatchConsumer consumer)
                 throws Exception {
+            long rowBytes = rowSizeBytes(entity, value);
+            if (rowBytes > pageSizeBytes) {
+                throw new IllegalStateException("Cassandra row exceeds configured page size bytes: " + rowBytes + " > " + pageSizeBytes);
+            }
+            if (rowCount > 0 && bufferedBytes + rowBytes > pageSizeBytes) {
+                flush(request, consumer);
+            }
             ordinals.setSafe(rowCount, ordinal);
             entities.setSafe(rowCount, entity);
             featureIds.setSafe(rowCount, featureId);
             values.setSafe(rowCount, value);
             rowCount++;
-            if (rowCount >= batchSize) {
+            bufferedBytes += rowBytes;
+            if (rowCount >= batchSize || bufferedBytes >= pageSizeBytes) {
                 flush(request, consumer);
             }
         }
@@ -244,8 +255,13 @@ public final class ArrowMessages {
         /** Очищает буферы для следующего батча. */
         private void clear() {
             rowCount = 0;
+            bufferedBytes = 0;
             root.clear();
             root.allocateNew();
+        }
+
+        private static long rowSizeBytes(byte[] entity, byte[] value) {
+            return Long.BYTES + Integer.BYTES + entity.length + value.length;
         }
 
         /** Освобождает ресурсы стримера результатов. */

@@ -37,7 +37,10 @@ public final class FeatureStoreApplication {
     ) throws IOException {
         var codec = new LegacyJsonArrowCodec(catalog);
         var accessController = new TenantAccessController(catalog);
-        var sliceReadPipe = new CassandraSliceReadPipe(session);
+        var sliceReadPipe = new CassandraSliceReadPipe(
+                session,
+                CassandraSliceReadPipe.DEFAULT_BATCH_SIZE,
+                readPositiveIntEnv("CASSANDRA_SLICE_PAGE_SIZE_BYTES", CassandraSliceReadPipe.DEFAULT_PAGE_SIZE_BYTES));
         var readService = new LegacyReadService(allocator, codec, accessController, sliceReadPipe);
         return FeatureStoreHttpServer.start(httpPort, readService);
     }
@@ -48,5 +51,13 @@ public final class FeatureStoreApplication {
                 System.getenv().getOrDefault("CASSANDRA_HOST", "127.0.0.1"),
                 Integer.parseInt(System.getenv().getOrDefault("CASSANDRA_PORT", "9042")),
                 System.getenv().getOrDefault("CASSANDRA_DATACENTER", "datacenter1"));
+    }
+
+    private static int readPositiveIntEnv(String name, int defaultValue) {
+        int value = Integer.parseInt(System.getenv().getOrDefault(name, Integer.toString(defaultValue)));
+        if (value <= 0) {
+            throw new IllegalArgumentException(name + " must be positive");
+        }
+        return value;
     }
 }

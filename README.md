@@ -74,3 +74,4 @@ Environment variables:
 - `CASSANDRA_HOST` — Cassandra host, default `127.0.0.1`
 - `CASSANDRA_PORT` — Cassandra port, default `9042`
 - `CASSANDRA_DATACENTER` — local DC, default `datacenter1`
+- `CASSANDRA_SLICE_PAGE_SIZE_BYTES` — max in-memory Arrow result page size per Cassandra slice read, default `1048576`
