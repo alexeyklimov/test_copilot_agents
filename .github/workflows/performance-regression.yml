@@ -48,17 +48,37 @@ jobs:
           distribution: temurin
           java-version: "25"
           cache: gradle
+      - name: Detect base host benchmark support
+        id: detect-base-host
+        run: |
+          if grep -q 'tasks.register<JavaExec>("jmh")' "$GITHUB_WORKSPACE/base/app/build.gradle.kts"; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Prepare result directory
         run: mkdir -p "$GITHUB_WORKSPACE/results"
       - name: Run candidate JMH benchmarks
         working-directory: ${{ github.workspace }}/candidate
         run: ./gradlew jmh -Pbenchmark.profile=ci -Pjmh.resultFile="$GITHUB_WORKSPACE/results/head-jmh.json"
       - name: Run base JMH benchmarks
+        if: steps.detect-base-host.outputs.supported == 'true'
         working-directory: ${{ github.workspace }}/base
         run: ./gradlew jmh -Pbenchmark.profile=ci -Pjmh.resultFile="$GITHUB_WORKSPACE/results/base-jmh.json"
       - name: Compare host JMH results
+        if: steps.detect-base-host.outputs.supported == 'true'
         working-directory: ${{ github.workspace }}/candidate
         run: python3 scripts/compare_jmh.py --base "$GITHUB_WORKSPACE/results/base-jmh.json" --candidate "$GITHUB_WORKSPACE/results/head-jmh.json" --threshold 0.15 --summary "$GITHUB_WORKSPACE/results/host-jmh-summary.md"
+      - name: Write host bootstrap summary
+        if: steps.detect-base-host.outputs.supported != 'true'
+        run: |
+          cat <<'EOF' > "$GITHUB_WORKSPACE/results/host-jmh-summary.md"
+          # JMH regression summary
+
+          - compared benchmarks: 0
+          - regressions: 0
+          - note: base branch does not yet contain the `jmh` benchmark task, so this run only produced the candidate baseline artifact.
+          EOF
       - name: Publish host JMH summary
         if: always()
         run: cat "$GITHUB_WORKSPACE/results/host-jmh-summary.md" >> "$GITHUB_STEP_SUMMARY"
@@ -81,19 +101,41 @@ jobs:
           path: base
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 0
+      - name: Detect base Docker benchmark support
+        id: detect-base-docker
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/base/docker/performance.Dockerfile" ] \
+            && grep -q 'tasks.register<JavaExec>("jmh")' "$GITHUB_WORKSPACE/base/app/build.gradle.kts"; then
+            echo "supported=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "supported=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Prepare result directory
         run: mkdir -p "$GITHUB_WORKSPACE/results"
       - name: Build candidate benchmark image
         run: docker build -f "$GITHUB_WORKSPACE/candidate/docker/performance.Dockerfile" -t feature-store-perf-candidate "$GITHUB_WORKSPACE/candidate"
       - name: Build base benchmark image
+        if: steps.detect-base-docker.outputs.supported == 'true'
         run: docker build -f "$GITHUB_WORKSPACE/base/docker/performance.Dockerfile" -t feature-store-perf-base "$GITHUB_WORKSPACE/base"
       - name: Run candidate per-core benchmarks
         run: docker run --rm --cpus 1 --memory 2g -v "$GITHUB_WORKSPACE/results:/results" feature-store-perf-candidate jmh -Pbenchmark.profile=ci -Pjmh.resultFile=/results/head-docker-jmh.json
       - name: Run base per-core benchmarks
+        if: steps.detect-base-docker.outputs.supported == 'true'
         run: docker run --rm --cpus 1 --memory 2g -v "$GITHUB_WORKSPACE/results:/results" feature-store-perf-base jmh -Pbenchmark.profile=ci -Pjmh.resultFile=/results/base-docker-jmh.json
       - name: Compare per-core JMH results
+        if: steps.detect-base-docker.outputs.supported == 'true'
         working-directory: ${{ github.workspace }}/candidate
         run: python3 scripts/compare_jmh.py --base "$GITHUB_WORKSPACE/results/base-docker-jmh.json" --candidate "$GITHUB_WORKSPACE/results/head-docker-jmh.json" --threshold 0.15 --summary "$GITHUB_WORKSPACE/results/docker-jmh-summary.md"
+      - name: Write Docker bootstrap summary
+        if: steps.detect-base-docker.outputs.supported != 'true'
+        run: |
+          cat <<'EOF' > "$GITHUB_WORKSPACE/results/docker-jmh-summary.md"
+          # JMH regression summary
+
+          - compared benchmarks: 0
+          - regressions: 0
+          - note: base branch does not yet contain the Docker benchmark harness, so this run only produced the candidate 1-core baseline artifact.
+          EOF
       - name: Publish per-core summary
         if: always()
         run: cat "$GITHUB_WORKSPACE/results/docker-jmh-summary.md" >> "$GITHUB_STEP_SUMMARY"

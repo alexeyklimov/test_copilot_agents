@@ -140,6 +140,13 @@ val jmh = tasks.register<JavaExec>("jmh") {
     args("-rf", "json", "-rff", resultFile.get())
     if (benchmarkProfile.get() == "ci") {
         args("-wi", "1", "-i", "1", "-w", "300ms", "-r", "300ms", "-f", "1")
+        args(
+                "-p", "sliceCount=2",
+                "-p", "entitiesPerSlice=25",
+                "-p", "featuresPerSlice=32",
+                "-p", "entitySizeBytes=128",
+                "-p", "valueSizeBytes=256"
+        )
     } else {
         args("-wi", "2", "-i", "3", "-w", "1s", "-r", "1s", "-f", "1")
     }
