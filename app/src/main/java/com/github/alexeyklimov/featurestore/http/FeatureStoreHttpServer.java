@@ -8,7 +8,6 @@ import com.sun.net.httpserver.HttpServer;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.file.Files;
-import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.Executors;
 
@@ -63,7 +62,7 @@ public final class FeatureStoreHttpServer implements AutoCloseable {
             try (var requestBody = exchange.getRequestBody()) {
                 var preparedRead = readService.prepare(tenantId, requestBody);
                 try (preparedRead) {
-                    var responseFile = Path.of("/tmp").resolve("legacy-read-" + java.util.UUID.randomUUID() + ".json");
+                    var responseFile = Files.createTempFile("legacy-read-", ".json");
                     try {
                         try (var responseStream = Files.newOutputStream(responseFile)) {
                             preparedRead.stream(responseStream);
