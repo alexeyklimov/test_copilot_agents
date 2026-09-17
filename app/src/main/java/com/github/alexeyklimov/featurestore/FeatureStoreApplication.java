@@ -10,6 +10,7 @@ import com.github.alexeyklimov.featurestore.service.LegacyJsonArrowCodec;
 import com.github.alexeyklimov.featurestore.service.LegacyReadService;
 import com.github.alexeyklimov.featurestore.service.TenantAccessController;
 import java.io.IOException;
+import java.time.Duration;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class FeatureStoreApplication {
@@ -20,9 +21,18 @@ public final class FeatureStoreApplication {
     /** Запускает приложение и HTTP-сервер. */
     public static void main(String[] args) throws Exception {
         var httpPort = Integer.parseInt(System.getenv().getOrDefault("PORT", "8080"));
+        var cassandraHost = System.getenv().getOrDefault("CASSANDRA_HOST", "127.0.0.1");
+        var cassandraPort = Integer.parseInt(System.getenv().getOrDefault("CASSANDRA_PORT", "9042"));
         try (var allocator = new RootAllocator();
-             var session = createSession();
-             var server = createServer(httpPort, allocator, session, FeatureCatalogDefaults.create())) {
+             var session = createSession(cassandraHost, cassandraPort);
+             var server = createServer(
+                     httpPort,
+                     allocator,
+                     session,
+                     cassandraHost,
+                     cassandraPort,
+                     CassandraSliceReadPipe.defaultRequestTimeout(),
+                     FeatureCatalogDefaults.create())) {
             server.start();
             Thread.currentThread().join();
         }
@@ -33,20 +43,34 @@ public final class FeatureStoreApplication {
             int httpPort,
             RootAllocator allocator,
             CqlSession session,
+            String cassandraHost,
+            int cassandraPort,
+            FeatureCatalog catalog
+    ) throws IOException {
+        return createServer(httpPort, allocator, session, cassandraHost, cassandraPort, CassandraSliceReadPipe.defaultRequestTimeout(), catalog);
+    }
+
+    public static FeatureStoreHttpServer createServer(
+            int httpPort,
+            RootAllocator allocator,
+            CqlSession session,
+            String cassandraHost,
+            int cassandraPort,
+            Duration requestTimeout,
             FeatureCatalog catalog
     ) throws IOException {
         var codec = new LegacyJsonArrowCodec(catalog);
         var accessController = new TenantAccessController(catalog);
-        var sliceReadPipe = new CassandraSliceReadPipe(session);
+        var sliceReadPipe = new CassandraSliceReadPipe(cassandraHost, cassandraPort, 512, requestTimeout);
         var readService = new LegacyReadService(allocator, codec, accessController, sliceReadPipe);
         return FeatureStoreHttpServer.start(httpPort, readService);
     }
 
     /** Создает Cassandra-сессию из переменных окружения. */
-    private static CqlSession createSession() {
+    private static CqlSession createSession(String host, int port) {
         return CqlSessionFactory.create(
-                System.getenv().getOrDefault("CASSANDRA_HOST", "127.0.0.1"),
-                Integer.parseInt(System.getenv().getOrDefault("CASSANDRA_PORT", "9042")),
+                host,
+                port,
                 System.getenv().getOrDefault("CASSANDRA_DATACENTER", "datacenter1"));
     }
 }

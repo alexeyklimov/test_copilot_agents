@@ -22,8 +22,10 @@ import java.util.List;
 import java.util.Map;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.ValueVector;
 import org.apache.arrow.vector.VarBinaryVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ViewVarBinaryVector;
 
 public final class LegacyJsonArrowCodec {
     private final JsonFactory jsonFactory = new JsonFactory();
@@ -246,7 +248,7 @@ public final class LegacyJsonArrowCodec {
         public void consume(SliceReadRequest request, VectorSchemaRoot batch) throws IOException {
             var entities = (VarBinaryVector) batch.getVector("entity");
             var featureIds = (IntVector) batch.getVector("feature_id");
-            var values = (VarBinaryVector) batch.getVector("value");
+            var values = batch.getVector("value");
             for (int row = 0; row < batch.getRowCount(); row++) {
                 var entity = new String(entities.get(row), StandardCharsets.UTF_8);
                 var keyName = request.keyType().name();
@@ -260,7 +262,7 @@ public final class LegacyJsonArrowCodec {
                     generator.writeObjectFieldStart("features");
                 }
                 var feature = request.keyType().featureById(featureIds.get(row));
-                writeDecodedField(feature.name(), feature.valueEncoding(), values.get(row));
+                writeDecodedField(feature.name(), feature.valueEncoding(), binaryValue(values, row));
             }
         }
 
@@ -272,6 +274,16 @@ public final class LegacyJsonArrowCodec {
                         ByteBuffer.wrap(bytes).order(ByteOrder.BIG_ENDIAN).getInt());
                 case UTF8 -> generator.writeStringField(fieldName, new String(bytes, StandardCharsets.UTF_8));
             }
+        }
+
+        private static byte[] binaryValue(ValueVector vector, int row) {
+            if (vector instanceof VarBinaryVector varBinaryVector) {
+                return varBinaryVector.get(row);
+            }
+            if (vector instanceof ViewVarBinaryVector viewVarBinaryVector) {
+                return viewVarBinaryVector.get(row);
+            }
+            throw new IllegalArgumentException("Unsupported binary vector type: " + vector.getClass().getName());
         }
 
         /** Завершает текущий объект в JSON-потоке. */

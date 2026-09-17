@@ -91,7 +91,14 @@ public final class TestEnvironment implements AutoCloseable {
                     .build());
         }
         var session = sessionBuilder.build();
-        var server = FeatureStoreApplication.createServer(0, allocator, session, catalog);
+        var server = FeatureStoreApplication.createServer(
+                0,
+                allocator,
+                session,
+                address.getHostString(),
+                address.getPort(),
+                requestTimeout != null ? requestTimeout : com.github.alexeyklimov.featurestore.cassandra.CassandraSliceReadPipe.defaultRequestTimeout(),
+                catalog);
         server.start();
         return new TestEnvironment(simulacron, node, allocator, session, server, primedQueries);
     }
@@ -152,6 +159,10 @@ public final class TestEnvironment implements AutoCloseable {
 
     public CqlSession session() {
         return session;
+    }
+
+    public InetSocketAddress cassandraAddress() {
+        return (InetSocketAddress) node.getAddress();
     }
 
     @Override

@@ -154,7 +154,7 @@ public class ReadPathComponentBenchmark {
                     PerformanceFixtures.FailureMode.NONE,
                     -1,
                     java.time.Duration.ZERO);
-            pipe = new CassandraSliceReadPipe(environment.session());
+            pipe = new CassandraSliceReadPipe(environment.cassandraAddress().getHostString(), environment.cassandraAddress().getPort());
             allocator = new RootAllocator();
             var codec = new LegacyJsonArrowCodec(catalog);
             request = codec.parse(new ByteArrayInputStream(requestBytes), allocator);
