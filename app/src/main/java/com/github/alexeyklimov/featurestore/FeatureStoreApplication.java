@@ -10,6 +10,7 @@ import com.github.alexeyklimov.featurestore.service.LegacyJsonArrowCodec;
 import com.github.alexeyklimov.featurestore.service.LegacyReadService;
 import com.github.alexeyklimov.featurestore.service.TenantAccessController;
 import java.io.IOException;
+import java.time.Duration;
 import org.apache.arrow.memory.RootAllocator;
 
 public final class FeatureStoreApplication {
@@ -24,7 +25,14 @@ public final class FeatureStoreApplication {
         var cassandraPort = Integer.parseInt(System.getenv().getOrDefault("CASSANDRA_PORT", "9042"));
         try (var allocator = new RootAllocator();
              var session = createSession(cassandraHost, cassandraPort);
-             var server = createServer(httpPort, allocator, session, cassandraHost, cassandraPort, FeatureCatalogDefaults.create())) {
+             var server = createServer(
+                     httpPort,
+                     allocator,
+                     session,
+                     cassandraHost,
+                     cassandraPort,
+                     CassandraSliceReadPipe.defaultRequestTimeout(),
+                     FeatureCatalogDefaults.create())) {
             server.start();
             Thread.currentThread().join();
         }
@@ -39,9 +47,21 @@ public final class FeatureStoreApplication {
             int cassandraPort,
             FeatureCatalog catalog
     ) throws IOException {
+        return createServer(httpPort, allocator, session, cassandraHost, cassandraPort, CassandraSliceReadPipe.defaultRequestTimeout(), catalog);
+    }
+
+    public static FeatureStoreHttpServer createServer(
+            int httpPort,
+            RootAllocator allocator,
+            CqlSession session,
+            String cassandraHost,
+            int cassandraPort,
+            Duration requestTimeout,
+            FeatureCatalog catalog
+    ) throws IOException {
         var codec = new LegacyJsonArrowCodec(catalog);
         var accessController = new TenantAccessController(catalog);
-        var sliceReadPipe = new CassandraSliceReadPipe(cassandraHost, cassandraPort);
+        var sliceReadPipe = new CassandraSliceReadPipe(cassandraHost, cassandraPort, 512, requestTimeout);
         var readService = new LegacyReadService(allocator, codec, accessController, sliceReadPipe);
         return FeatureStoreHttpServer.start(httpPort, readService);
     }

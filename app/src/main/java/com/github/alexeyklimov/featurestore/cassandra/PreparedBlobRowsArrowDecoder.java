@@ -2,7 +2,6 @@ package com.github.alexeyklimov.featurestore.cassandra;
 
 import com.datastax.oss.driver.internal.core.protocol.ByteBufPrimitiveCodec;
 import com.datastax.oss.protocol.internal.ProtocolConstants;
-import com.datastax.oss.protocol.internal.response.result.ColumnSpec;
 import com.datastax.oss.protocol.internal.response.result.RawType;
 import com.datastax.oss.protocol.internal.response.result.RowsMetadata;
 import io.netty.buffer.ByteBuf;
@@ -35,7 +34,6 @@ public final class PreparedBlobRowsArrowDecoder {
     private static final int RESULT_OPCODE = 0x08;
     private static final int RESULT_KIND_ROWS = 0x0002;
     private static final int ROWS_NO_METADATA_FLAG = 0x0004;
-    private static final int ROWS_GLOBAL_TABLES_SPEC_FLAG = 0x0001;
     private static final int VIEW_WIDTH_BYTES = 16;
     private static final int INLINE_BINARY_BYTES = 12;
     private static final ByteBufPrimitiveCodec BYTE_BUF_CODEC = new ByteBufPrimitiveCodec(UnpooledByteBufAllocator.DEFAULT);
@@ -207,17 +205,18 @@ public final class PreparedBlobRowsArrowDecoder {
         var body = frame.duplicate();
         body.readerIndex(index);
         var metadata = RowsMetadata.decode(body, BYTE_BUF_CODEC, false, SUPPORTED_PROTOCOL_VERSION);
-        require(metadata.columnCount == expectedColumnCount,
-                "Unexpected ROWS column count: expected %s, got %s".formatted(expectedColumnCount, metadata.columnCount));
-        if ((metadata.flags & ROWS_NO_METADATA_FLAG) == 0) {
-            require(metadata.columnSpecs != null && metadata.columnSpecs.size() == expectedColumnCount,
-                    "Optimized path requires column specs when ROWS metadata is present");
-            metadataValidator.accept(metadata);
-        }
-
         require(body.readerIndex() + Integer.BYTES <= frame.readableBytes(), "Malformed frame: missing row count");
         int rowCount = body.readInt();
         require(rowCount >= 0, "Malformed frame: negative row count");
+        if (rowCount > 0) {
+            require(metadata.columnCount == expectedColumnCount,
+                    "Unexpected ROWS column count: expected %s, got %s".formatted(expectedColumnCount, metadata.columnCount));
+            if ((metadata.flags & ROWS_NO_METADATA_FLAG) == 0) {
+                require(metadata.columnSpecs != null && metadata.columnSpecs.size() == expectedColumnCount,
+                        "Optimized path requires column specs when ROWS metadata is present");
+                metadataValidator.accept(metadata);
+            }
+        }
         return new RowsLayout(rowCount, body.readerIndex());
     }
 

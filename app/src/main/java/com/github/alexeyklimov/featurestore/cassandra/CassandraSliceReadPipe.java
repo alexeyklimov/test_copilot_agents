@@ -24,6 +24,7 @@ import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.ByteBuffer;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import org.apache.arrow.memory.BufferAllocator;
@@ -31,6 +32,7 @@ import org.apache.arrow.memory.BufferAllocator;
 public final class CassandraSliceReadPipe {
     private static final int PROTOCOL_V4 = 4;
     private static final int DEFAULT_BATCH_SIZE = 512;
+    private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(2);
     private static final int HEADER_SIZE = 9;
     private static final int RESULT_OPCODE = 0x08;
     private static final int ERROR_OPCODE = 0x00;
@@ -38,21 +40,31 @@ public final class CassandraSliceReadPipe {
 
     private final InetSocketAddress cassandraAddress;
     private final int batchSize;
+    private final Duration requestTimeout;
     private final PreparedBlobRowsArrowDecoder optimizedDecoder;
 
     /** Создает пайп чтения с размером батча по умолчанию. */
     public CassandraSliceReadPipe(String host, int port) {
-        this(new InetSocketAddress(host, port), DEFAULT_BATCH_SIZE);
+        this(new InetSocketAddress(host, port), DEFAULT_BATCH_SIZE, DEFAULT_REQUEST_TIMEOUT);
     }
 
     /** Инициализирует пайп чтения с размером батча. */
     public CassandraSliceReadPipe(String host, int port, int batchSize) {
-        this(new InetSocketAddress(host, port), batchSize);
+        this(new InetSocketAddress(host, port), batchSize, DEFAULT_REQUEST_TIMEOUT);
     }
 
-    CassandraSliceReadPipe(InetSocketAddress cassandraAddress, int batchSize) {
+    public CassandraSliceReadPipe(String host, int port, int batchSize, Duration requestTimeout) {
+        this(new InetSocketAddress(host, port), batchSize, requestTimeout);
+    }
+
+    public static Duration defaultRequestTimeout() {
+        return DEFAULT_REQUEST_TIMEOUT;
+    }
+
+    CassandraSliceReadPipe(InetSocketAddress cassandraAddress, int batchSize, Duration requestTimeout) {
         this.cassandraAddress = cassandraAddress;
         this.batchSize = batchSize;
+        this.requestTimeout = requestTimeout;
         this.optimizedDecoder = new PreparedBlobRowsArrowDecoder(java.util.List.of("value"));
     }
 
@@ -61,7 +73,7 @@ public final class CassandraSliceReadPipe {
         if (request.featureIds().length == 0) {
             return;
         }
-        try (var client = NativeCassandraClient.connect(cassandraAddress)) {
+        try (var client = NativeCassandraClient.connect(cassandraAddress, requestTimeout)) {
             for (int index = 0; index < request.rowCount(); index++) {
                 var entity = request.entity(index);
                 var query = queryFor(request, entity);
@@ -98,23 +110,27 @@ public final class CassandraSliceReadPipe {
         private final Socket socket;
         private final InputStream input;
         private final OutputStream output;
+        private final int timeoutMillis;
         private short nextStreamId;
 
-        private NativeCassandraClient(Socket socket) throws IOException {
+        private NativeCassandraClient(Socket socket, int timeoutMillis) throws IOException {
             this.socket = socket;
             this.input = socket.getInputStream();
             this.output = socket.getOutputStream();
+            this.timeoutMillis = timeoutMillis;
             startup();
         }
 
-        static NativeCassandraClient connect(InetSocketAddress address) throws IOException {
+        static NativeCassandraClient connect(InetSocketAddress address, Duration requestTimeout) throws IOException {
+            int timeoutMillis = Math.toIntExact(Math.max(1L, requestTimeout.toMillis()));
             var socket = new Socket();
-            socket.connect(address, 5_000);
-            socket.setSoTimeout(5_000);
-            return new NativeCassandraClient(socket);
+            socket.connect(address, timeoutMillis);
+            socket.setSoTimeout(timeoutMillis);
+            return new NativeCassandraClient(socket, timeoutMillis);
         }
 
         ByteBuf execute(String query, int requestedRows, int maxRows) throws IOException {
+            socket.setSoTimeout(timeoutMillis);
             var options = new QueryOptions(
                     ConsistencyLevel.ONE.getProtocolCode(),
                     Collections.emptyList(),
@@ -140,6 +156,7 @@ public final class CassandraSliceReadPipe {
         }
 
         private void startup() throws IOException {
+            socket.setSoTimeout(timeoutMillis);
             send(new Startup());
             var frame = readFrame();
             try {
