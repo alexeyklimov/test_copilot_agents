@@ -1,6 +1,12 @@
 package com.github.alexeyklimov.featurestore.cassandra;
 
+import com.datastax.oss.driver.internal.core.protocol.ByteBufPrimitiveCodec;
+import com.datastax.oss.protocol.internal.ProtocolConstants;
+import com.datastax.oss.protocol.internal.response.result.ColumnSpec;
+import com.datastax.oss.protocol.internal.response.result.RawType;
+import com.datastax.oss.protocol.internal.response.result.RowsMetadata;
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.UnpooledByteBufAllocator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -29,8 +35,12 @@ public final class PreparedBlobRowsArrowDecoder {
     private static final int RESULT_OPCODE = 0x08;
     private static final int RESULT_KIND_ROWS = 0x0002;
     private static final int ROWS_NO_METADATA_FLAG = 0x0004;
+    private static final int ROWS_GLOBAL_TABLES_SPEC_FLAG = 0x0001;
     private static final int VIEW_WIDTH_BYTES = 16;
     private static final int INLINE_BINARY_BYTES = 12;
+    private static final ByteBufPrimitiveCodec BYTE_BUF_CODEC = new ByteBufPrimitiveCodec(UnpooledByteBufAllocator.DEFAULT);
+    private static final RawType FEATURE_ID_TYPE = RawType.PRIMITIVES.get(ProtocolConstants.DataType.INT);
+    private static final RawType BLOB_TYPE = RawType.PRIMITIVES.get(ProtocolConstants.DataType.BLOB);
     private static final List<Field> RESULT_BATCH_FIELDS = List.of(
             new Field("request_ordinal", FieldType.notNullable(new ArrowType.Int(64, true)), null),
             new Field("entity", FieldType.notNullable(ArrowType.Binary.INSTANCE), null),
@@ -101,7 +111,7 @@ public final class PreparedBlobRowsArrowDecoder {
     }
 
     private ParsedLayout parse(ByteBuf frame) {
-        var resultLayout = parseRowsLayout(frame, columnNames.size());
+        var resultLayout = parseRowsLayout(frame, columnNames.size(), this::validateBlobColumns);
         int index = resultLayout.rowDataOffset;
         int rowCount = resultLayout.rowCount;
         int columnCount = columnNames.size();
@@ -139,7 +149,7 @@ public final class PreparedBlobRowsArrowDecoder {
     }
 
     private FeatureValueLayout parseFeatureValueRows(ByteBuf frame) {
-        var resultLayout = parseRowsLayout(frame, 2);
+        var resultLayout = parseRowsLayout(frame, 2, PreparedBlobRowsArrowDecoder::validateFeatureValueColumns);
         int index = resultLayout.rowDataOffset;
         int rowCount = resultLayout.rowCount;
 
@@ -175,7 +185,7 @@ public final class PreparedBlobRowsArrowDecoder {
         return new FeatureValueLayout(rowCount, featureIds, values);
     }
 
-    private RowsLayout parseRowsLayout(ByteBuf frame, int expectedColumnCount) {
+    private RowsLayout parseRowsLayout(ByteBuf frame, int expectedColumnCount, java.util.function.Consumer<RowsMetadata> metadataValidator) {
         require(frame.readableBytes() >= FRAME_HEADER_SIZE, "Malformed frame: missing native protocol header");
         int version = frame.getUnsignedByte(0);
         require((version & RESPONSE_DIRECTION_MASK) != 0 && (version & 0x7F) == SUPPORTED_PROTOCOL_VERSION,
@@ -194,21 +204,42 @@ public final class PreparedBlobRowsArrowDecoder {
         index += Integer.BYTES;
         require(resultKind == RESULT_KIND_ROWS, "Optimized path only supports ROWS results");
 
-        int metadataFlags = frame.getInt(index);
-        index += Integer.BYTES;
-        require(metadataFlags == ROWS_NO_METADATA_FLAG,
-                "Optimized path only supports prepared ROWS responses with NO_METADATA");
+        var body = frame.duplicate();
+        body.readerIndex(index);
+        var metadata = RowsMetadata.decode(body, BYTE_BUF_CODEC, false, SUPPORTED_PROTOCOL_VERSION);
+        require(metadata.columnCount == expectedColumnCount,
+                "Unexpected ROWS column count: expected %s, got %s".formatted(expectedColumnCount, metadata.columnCount));
+        if ((metadata.flags & ROWS_NO_METADATA_FLAG) == 0) {
+            require(metadata.columnSpecs != null && metadata.columnSpecs.size() == expectedColumnCount,
+                    "Optimized path requires column specs when ROWS metadata is present");
+            metadataValidator.accept(metadata);
+        }
 
-        int columnCount = frame.getInt(index);
-        index += Integer.BYTES;
-        require(columnCount == expectedColumnCount,
-                "Unexpected prepared ROWS column count: expected %s, got %s".formatted(expectedColumnCount, columnCount));
-
-        require(index + Integer.BYTES <= frame.readableBytes(), "Malformed frame: missing row count");
-        int rowCount = frame.getInt(index);
-        index += Integer.BYTES;
+        require(body.readerIndex() + Integer.BYTES <= frame.readableBytes(), "Malformed frame: missing row count");
+        int rowCount = body.readInt();
         require(rowCount >= 0, "Malformed frame: negative row count");
-        return new RowsLayout(rowCount, index);
+        return new RowsLayout(rowCount, body.readerIndex());
+    }
+
+    private void validateBlobColumns(RowsMetadata metadata) {
+        for (int columnIndex = 0; columnIndex < metadata.columnSpecs.size(); columnIndex++) {
+            var columnSpec = metadata.columnSpecs.get(columnIndex);
+            require(columnNames.get(columnIndex).equals(columnSpec.name),
+                    "Unexpected ROWS column name at index %s: expected %s, got %s"
+                            .formatted(columnIndex, columnNames.get(columnIndex), columnSpec.name));
+            require(BLOB_TYPE.equals(columnSpec.type),
+                    "Unexpected ROWS column type at index %s: expected blob".formatted(columnIndex));
+        }
+    }
+
+    private static void validateFeatureValueColumns(RowsMetadata metadata) {
+        var featureId = metadata.columnSpecs.get(0);
+        require("feature_id".equals(featureId.name), "Unexpected first ROWS column name: expected feature_id");
+        require(FEATURE_ID_TYPE.equals(featureId.type), "Unexpected feature_id ROWS column type: expected int");
+
+        var value = metadata.columnSpecs.get(1);
+        require("value".equals(value.name), "Unexpected second ROWS column name: expected value");
+        require(BLOB_TYPE.equals(value.type), "Unexpected value ROWS column type: expected blob");
     }
 
     private static ViewVarBinaryVector buildVector(

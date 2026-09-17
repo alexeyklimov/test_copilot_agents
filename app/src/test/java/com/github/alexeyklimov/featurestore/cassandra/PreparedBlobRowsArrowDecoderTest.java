@@ -59,21 +59,37 @@ class PreparedBlobRowsArrowDecoderTest {
     }
 
     @Test
-    void rejectsUnexpectedPreparedMetadataShape() {
+    void acceptsMatchingRowsMetadataAndRejectsUnexpectedMetadataShape() {
         var decoder = new PreparedBlobRowsArrowDecoder(List.of("value"));
         try (var allocator = new RootAllocator()) {
-            var metadataFrame = rawFrame(4, 0, body(buffer -> {
-                buffer.writeInt(0x0002);
-                buffer.writeInt(0x0000);
-                buffer.writeInt(1);
-            }));
+            var metadataFrame = blobRowsFrameWithColumnSpecs(
+                    4,
+                    0,
+                    List.of(new ColumnSpecData("ks", "tbl", "value", 0x0003)),
+                    List.of(List.of(bytes("value-000000000001"))));
             try {
-                assertThatThrownBy(() -> decoder.decode(metadataFrame, allocator))
-                        .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessageContaining("NO_METADATA");
+                try (var batch = decoder.decode(metadataFrame, allocator)) {
+                    assertThat(batch.root().getRowCount()).isEqualTo(1);
+                    assertThat(((ViewVarBinaryVector) batch.root().getVector("value")).get(0))
+                            .isEqualTo(bytes("value-000000000001"));
+                }
                 assertThat(metadataFrame.refCnt()).isEqualTo(1);
             } finally {
                 metadataFrame.release();
+            }
+
+            var wrongNameFrame = blobRowsFrameWithColumnSpecs(
+                    4,
+                    0,
+                    List.of(new ColumnSpecData("ks", "tbl", "wrong_value", 0x0003)),
+                    List.of(List.of(bytes("value-000000000001"))));
+            try {
+                assertThatThrownBy(() -> decoder.decode(wrongNameFrame, allocator))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessageContaining("column name");
+                assertThat(wrongNameFrame.refCnt()).isEqualTo(1);
+            } finally {
+                wrongNameFrame.release();
             }
 
             var mismatchFrame = blobRowsFrame(4, 0, 0x0004, 2, List.of(List.of(bytes("left"), bytes("right"))));
@@ -150,6 +166,36 @@ class PreparedBlobRowsArrowDecoderTest {
         }));
     }
 
+    private static ByteBuf blobRowsFrameWithColumnSpecs(
+            int protocolVersion,
+            int headerFlags,
+            List<ColumnSpecData> columns,
+            List<List<byte[]>> rows
+    ) {
+        return rawFrame(protocolVersion, headerFlags, body(buffer -> {
+            buffer.writeInt(0x0002);
+            buffer.writeInt(0x0000);
+            buffer.writeInt(columns.size());
+            for (var column : columns) {
+                writeString(buffer, column.keyspace);
+                writeString(buffer, column.table);
+                writeString(buffer, column.name);
+                buffer.writeShort(column.typeId);
+            }
+            buffer.writeInt(rows.size());
+            for (var row : rows) {
+                for (var cell : row) {
+                    if (cell == null) {
+                        buffer.writeInt(-1);
+                    } else {
+                        buffer.writeInt(cell.length);
+                        buffer.writeBytes(cell);
+                    }
+                }
+            }
+        }));
+    }
+
     private static ByteBuf rawFrame(int protocolVersion, int headerFlags, ByteBuf body) {
         var frame = Unpooled.directBuffer(9 + body.readableBytes());
         try {
@@ -169,5 +215,14 @@ class PreparedBlobRowsArrowDecoderTest {
         var body = Unpooled.directBuffer();
         writer.accept(body);
         return body;
+    }
+
+    private static void writeString(ByteBuf buffer, String value) {
+        var bytes = value.getBytes(StandardCharsets.UTF_8);
+        buffer.writeShort(bytes.length);
+        buffer.writeBytes(bytes);
+    }
+
+    private record ColumnSpecData(String keyspace, String table, String name, int typeId) {
     }
 }

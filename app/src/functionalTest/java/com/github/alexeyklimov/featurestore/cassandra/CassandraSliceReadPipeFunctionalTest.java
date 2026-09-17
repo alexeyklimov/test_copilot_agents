@@ -35,7 +35,7 @@ class CassandraSliceReadPipeFunctionalTest {
                     }
                     """.getBytes(StandardCharsets.UTF_8)), allocator)) {
                 var sliceRequest = request.sliceRequests().get(0);
-                var pipe = new CassandraSliceReadPipe(environment.session());
+                var pipe = new CassandraSliceReadPipe(environment.cassandraAddress().getHostString(), environment.cassandraAddress().getPort());
 
                 var batches = new int[1];
                 pipe.stream(sliceRequest, allocator, (ignoredRequest, batch) -> {
